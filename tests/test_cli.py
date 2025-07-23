@@ -274,7 +274,10 @@ class TestServeCommand:
         assert "--db" in result.output
 
     @patch("sigint.storage.SignalStore")
-    @patch("sigint.output.api.serve_signals", side_effect=ImportError("Install sigint[api]"))
+    @patch(
+        "sigint.output.api.serve_signals",
+        side_effect=ImportError("Install sigint[api]"),
+    )
     def test_serve_reports_missing_api_dependency(
         self,
         _mock_serve_signals: MagicMock,
