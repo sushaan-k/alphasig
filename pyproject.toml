@@ -73,9 +73,9 @@ dev = [
 sigint = "sigint.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/sushaankandukoori/sigint"
-Repository = "https://github.com/sushaankandukoori/sigint"
-Issues = "https://github.com/sushaankandukoori/sigint/issues"
+Homepage = "https://github.com/sushaan-k/sigint"
+Repository = "https://github.com/sushaan-k/sigint"
+Issues = "https://github.com/sushaan-k/sigint/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sigint"]
