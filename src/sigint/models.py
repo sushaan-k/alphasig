@@ -143,6 +143,18 @@ class Signal(BaseModel, frozen=True):
     def _clamp_unit(cls, v: float) -> float:
         return max(0.0, min(1.0, v))
 
+    @field_validator("related_tickers")
+    @classmethod
+    def _normalize_tickers(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for ticker in v:
+            normalised = ticker.strip().upper()
+            if normalised and normalised not in seen:
+                seen.add(normalised)
+                result.append(normalised)
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Supply-chain models
@@ -181,6 +193,7 @@ class RiskChange(BaseModel, frozen=True):
         description="Quoted language change, e.g. 'may face' -> 'currently subject to'",
     )
     severity_estimate: Severity = Severity.MEDIUM
+    confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     related_tickers: list[str] = Field(default_factory=list)
 
 
