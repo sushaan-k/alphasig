@@ -40,12 +40,13 @@ from sigint.models import (
 )
 from sigint.pipeline import Pipeline
 from sigint.sectors import Sector, classify_sector
-from sigint.signals import SignalCollection
+from sigint.signals import CorrelationMatrix, SignalCollection
 from sigint.storage import SignalStore
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "CorrelationMatrix",
     "EdgarClient",
     "Filing",
     "FilingSection",

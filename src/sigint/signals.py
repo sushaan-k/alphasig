@@ -6,7 +6,10 @@ with convenience methods for filtering, aggregation, and export.
 
 from __future__ import annotations
 
+import math
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,47 @@ from sigint.models import (
 from sigint.sectors import Sector, classify_sector
 
 logger = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class CorrelationMatrix:
+    """Result of a pairwise signal-type correlation analysis.
+
+    Attributes:
+        signal_types: Ordered list of signal type labels (row / column headers).
+        matrix: Square list-of-lists of Pearson correlation coefficients.
+        ticker_count: Number of tickers that contributed to the calculation.
+    """
+
+    signal_types: list[str]
+    matrix: list[list[float]]
+    ticker_count: int = 0
+
+    def get(self, type_a: str, type_b: str) -> float:
+        """Look up correlation between two signal types."""
+        idx_a = self.signal_types.index(type_a)
+        idx_b = self.signal_types.index(type_b)
+        return self.matrix[idx_a][idx_b]
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float:
+    """Compute Pearson correlation coefficient between two equal-length series.
+
+    Returns 0.0 when either series has zero variance (avoids division by
+    zero).
+    """
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    denom = math.sqrt(var_x * var_y)
+    if denom == 0.0:
+        return 0.0
+    return cov / denom
 
 
 class SignalCollection:
@@ -172,6 +216,84 @@ class SignalCollection:
         from sigint.graph import SupplyChainGraph
 
         return SupplyChainGraph(self.supply_chain_edges())
+
+    # -- Correlation -----------------------------------------------------------
+
+    def correlate(self, *signal_types: SignalType | str) -> CorrelationMatrix:
+        """Compute pairwise Pearson correlation of signal strengths across tickers.
+
+        For each ticker, the average strength per signal type is computed.
+        Then the Pearson correlation coefficient is calculated pairwise
+        across all tickers that have at least one signal of each requested
+        type.
+
+        Args:
+            *signal_types: Two or more signal types to compare.  Accepts
+                :class:`SignalType` members or plain strings.
+
+        Returns:
+            A :class:`CorrelationMatrix` with one row/column per signal type.
+
+        Raises:
+            ValueError: If fewer than two signal types are provided.
+        """
+        types = [
+            SignalType(t) if isinstance(t, str) else t for t in signal_types
+        ]
+        if len(types) < 2:
+            raise ValueError("correlate() requires at least two signal types")
+
+        # Build ticker -> signal_type -> [strength, ...]
+        ticker_map: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for sig in self._signals:
+            if sig.signal_type in types:
+                ticker_map[sig.ticker][sig.signal_type.value].append(sig.strength)
+
+        # Reduce to average strength per (ticker, type)
+        type_labels = [t.value for t in types]
+
+        # Only keep tickers that have data for ALL requested types
+        valid_tickers = [
+            tk
+            for tk, type_strengths in ticker_map.items()
+            if all(tl in type_strengths for tl in type_labels)
+        ]
+
+        n = len(type_labels)
+        matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
+
+        if len(valid_tickers) < 2:
+            # Not enough data -- return identity matrix
+            for i in range(n):
+                matrix[i][i] = 1.0
+            return CorrelationMatrix(
+                signal_types=type_labels,
+                matrix=matrix,
+                ticker_count=len(valid_tickers),
+            )
+
+        # Build vectors: one value per ticker for each type
+        vectors: dict[str, list[float]] = {}
+        for tl in type_labels:
+            vectors[tl] = [
+                sum(ticker_map[tk][tl]) / len(ticker_map[tk][tl])
+                for tk in valid_tickers
+            ]
+
+        for i, ti in enumerate(type_labels):
+            for j, tj in enumerate(type_labels):
+                if i == j:
+                    matrix[i][j] = 1.0
+                else:
+                    matrix[i][j] = _pearson(vectors[ti], vectors[tj])
+
+        return CorrelationMatrix(
+            signal_types=type_labels,
+            matrix=matrix,
+            ticker_count=len(valid_tickers),
+        )
 
     # -- Serialisation ---------------------------------------------------------
 
