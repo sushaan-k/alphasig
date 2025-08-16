@@ -50,6 +50,9 @@ class Pipeline:
         cache_dir: EDGAR cache directory.
         db_path: DuckDB storage path; ``None`` disables persistence.
         concurrency: Maximum concurrent engine tasks per filing.
+        max_concurrent: Maximum number of tickers to download and
+            process in parallel.  Uses :func:`asyncio.gather` with a
+            semaphore so EDGAR rate limits are respected.  Defaults to 3.
     """
 
     def __init__(
@@ -61,6 +64,7 @@ class Pipeline:
         cache_dir: str = "./edgar_cache",
         db_path: str | None = "sigint.duckdb",
         concurrency: int = 4,
+        max_concurrent: int = 3,
     ) -> None:
         self._model = model
         self._api_key = api_key
@@ -68,6 +72,7 @@ class Pipeline:
         self._cache_dir = cache_dir
         self._db_path = db_path
         self._concurrency = concurrency
+        self._max_concurrent = max_concurrent
 
     async def extract(
         self,
@@ -77,6 +82,7 @@ class Pipeline:
         lookback_years: int = 3,
         engines: Sequence[str] | None = None,
         store: bool = True,
+        max_concurrent: int | None = None,
     ) -> SignalCollection:
         """Run the full extraction pipeline.
 
@@ -86,6 +92,10 @@ class Pipeline:
             lookback_years: Years of filings to retrieve.
             engines: Extraction engines to run.  Defaults to all.
             store: Whether to persist signals to DuckDB.
+            max_concurrent: Maximum number of tickers to process in
+                parallel.  Defaults to the value set at construction time.
+                The semaphore respects EDGAR rate limits while allowing
+                concurrent filing downloads via :func:`asyncio.gather`.
 
         Returns:
             A :class:`SignalCollection` containing all extracted signals.
@@ -102,6 +112,7 @@ class Pipeline:
                 "for signal extraction."
             )
 
+        concurrency_limit = max_concurrent or self._max_concurrent
         llm = LLMClient(api_key=self._api_key, model=self._model)
         collection = SignalCollection()
 
@@ -109,9 +120,11 @@ class Pipeline:
             user_agent=self._user_agent,
             cache_dir=self._cache_dir,
         ) as edgar:
-            for ticker in tickers:
-                try:
-                    signals = await self._process_ticker(
+            sem = asyncio.Semaphore(concurrency_limit)
+
+            async def _process_with_limit(ticker: str) -> list[Signal]:
+                async with sem:
+                    return await self._process_ticker(
                         ticker=ticker,
                         edgar=edgar,
                         llm=llm,
@@ -119,13 +132,27 @@ class Pipeline:
                         filing_types=filing_types,
                         lookback_years=lookback_years,
                     )
-                    collection.extend(signals)
-                except Exception as exc:
+
+            logger.info(
+                "pipeline_starting",
+                tickers=list(tickers),
+                max_concurrent=concurrency_limit,
+            )
+
+            results: list[list[Signal] | BaseException] = await asyncio.gather(
+                *[_process_with_limit(t) for t in tickers],
+                return_exceptions=True,
+            )
+
+            for ticker, result in zip(tickers, results, strict=True):
+                if isinstance(result, BaseException):
                     logger.error(
                         "pipeline_ticker_failed",
                         ticker=ticker,
-                        error=str(exc),
+                        error=str(result),
                     )
+                else:
+                    collection.extend(result)
 
         if store and self._db_path and len(collection) > 0:
             try:
