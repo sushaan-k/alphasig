@@ -597,17 +597,43 @@ class TestToneEngine:
         assert signals[0].direction == SignalDirection.BULLISH
 
     @pytest.mark.asyncio
-    async def test_no_previous_sections_returns_no_tone_shift_signals(
+    async def test_no_previous_sections_emits_baseline_signals(
         self,
         mock_llm: LLMClient,
         sample_sections: list[FilingSection],
     ) -> None:
+        # When there is no prior filing, the engine should emit baseline signals
+        # using the absolute tone position rather than silently returning [].
         mock_llm.extract_json.return_value = [  # type: ignore[attr-defined]
             {
                 "topic": "revenue growth",
                 "tone": "confident_expanding",
                 "confidence": 0.82,
                 "key_phrases": ["strong growth"],
+            },
+        ]
+
+        engine = ToneEngine()
+        signals = await engine.extract(sample_sections, mock_llm)
+
+        assert len(signals) == 1
+        assert signals[0].signal_type == SignalType.TONE_SHIFT
+        assert signals[0].direction == SignalDirection.BULLISH
+        assert signals[0].metadata.get("is_baseline") is True
+
+    @pytest.mark.asyncio
+    async def test_no_previous_sections_neutral_tone_emits_no_signal(
+        self,
+        mock_llm: LLMClient,
+        sample_sections: list[FilingSection],
+    ) -> None:
+        # A neutral_factual baseline produces no signal (strength 0.0, skipped).
+        mock_llm.extract_json.return_value = [  # type: ignore[attr-defined]
+            {
+                "topic": "headcount",
+                "tone": "neutral_factual",
+                "confidence": 0.90,
+                "key_phrases": ["headcount was 12,000"],
             },
         ]
 

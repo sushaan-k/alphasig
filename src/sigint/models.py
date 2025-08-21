@@ -7,7 +7,6 @@ safe to share across async tasks.
 from __future__ import annotations
 
 import enum
-import math
 from datetime import date, datetime
 from typing import Any
 
@@ -138,44 +137,23 @@ class Signal(BaseModel, frozen=True):
     source_filing: str = Field(description="EDGAR filing URL")
     related_tickers: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    decay_rate: float = Field(
-        default=0.0,
-        ge=0.0,
-        description=(
-            "Exponential decay rate (per day). A value of 0 means no decay. "
-            "Typical values: 0.005 (half-life ~139 days), "
-            "0.01 (half-life ~69 days)."
-        ),
-    )
 
     @field_validator("strength", "confidence")
     @classmethod
     def _clamp_unit(cls, v: float) -> float:
         return max(0.0, min(1.0, v))
 
-    def current_strength(self, *, as_of: datetime) -> float:
-        """Compute decayed signal strength at a given point in time.
-
-        Uses exponential decay: ``strength * exp(-decay_rate * days_elapsed)``.
-        If *as_of* is before the signal timestamp the original strength is
-        returned (signals cannot grow stronger retroactively).
-
-        Args:
-            as_of: The datetime at which to evaluate the signal.
-
-        Returns:
-            The decayed strength, clamped to ``[0.0, 1.0]``.
-        """
-        if self.decay_rate == 0.0:
-            return self.strength
-
-        delta = as_of - self.timestamp
-        days_elapsed = delta.total_seconds() / 86_400.0
-        if days_elapsed <= 0:
-            return self.strength
-
-        decayed = self.strength * math.exp(-self.decay_rate * days_elapsed)
-        return max(0.0, min(1.0, decayed))
+    @field_validator("related_tickers")
+    @classmethod
+    def _normalize_tickers(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for ticker in v:
+            normalised = ticker.strip().upper()
+            if normalised and normalised not in seen:
+                seen.add(normalised)
+                result.append(normalised)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +193,7 @@ class RiskChange(BaseModel, frozen=True):
         description="Quoted language change, e.g. 'may face' -> 'currently subject to'",
     )
     severity_estimate: Severity = Severity.MEDIUM
+    confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     related_tickers: list[str] = Field(default_factory=list)
 
 
