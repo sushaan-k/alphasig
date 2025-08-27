@@ -229,6 +229,59 @@ class TestSignalCollection:
         assert len(filtered) == 1
         assert filtered[0].signal_type == SignalType.RISK_CHANGE
 
+    def test_where_filters_by_multiple_tickers_and_types(
+        self, sample_signals: list[Signal]
+    ) -> None:
+        coll = SignalCollection(
+            [
+                *sample_signals,
+                Signal(
+                    timestamp=datetime(2024, 11, 1, tzinfo=UTC),
+                    ticker="MSFT",
+                    signal_type=SignalType.SUPPLY_CHAIN,
+                    direction=SignalDirection.NEUTRAL,
+                    strength=0.88,
+                    confidence=0.81,
+                    context="MSFT depends_on NVDA for accelerator supply",
+                    source_filing="https://sec.gov/example-msft",
+                    related_tickers=["NVDA"],
+                    metadata={"target": "NVDA"},
+                ),
+            ]
+        )
+        filtered = coll.where(
+            tickers=["aapl", "msft"],
+            signal_types=[SignalType.RISK_CHANGE, "supply_chain"],
+        )
+        assert len(filtered) == 3
+        assert {signal.ticker for signal in filtered} == {"AAPL", "MSFT"}
+        assert {signal.signal_type for signal in filtered} == {
+            SignalType.RISK_CHANGE,
+            SignalType.SUPPLY_CHAIN,
+        }
+
+    def test_where_rejects_conflicting_singular_and_plural_filters(
+        self, sample_signals: list[Signal]
+    ) -> None:
+        coll = SignalCollection(sample_signals)
+
+        with pytest.raises(ValueError, match="ticker and tickers"):
+            coll.where(ticker="AAPL", tickers=["MSFT"])
+
+        with pytest.raises(ValueError, match="signal_type and signal_types"):
+            coll.where(signal_type=SignalType.RISK_CHANGE, signal_types=["m_and_a"])
+
+    def test_where_rejects_scalar_plural_filters(
+        self, sample_signals: list[Signal]
+    ) -> None:
+        coll = SignalCollection(sample_signals)
+
+        with pytest.raises(TypeError, match="tickers must be a sequence"):
+            coll.where(tickers="AAPL")  # type: ignore[arg-type]
+
+        with pytest.raises(TypeError, match="signal_types must be a sequence"):
+            coll.where(signal_types=SignalType.RISK_CHANGE)  # type: ignore[arg-type]
+
 
 class TestPearson:
     """Tests for the _pearson helper."""
