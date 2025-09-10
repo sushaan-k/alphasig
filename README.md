@@ -120,7 +120,7 @@ For offline portfolio review, `rank_signals` converts any stored or exported
 signals into a deterministic watchlist:
 
 ```python
-from sigint import SignalStore, rank_signals
+from sigint import SignalStore, rank_signals, summarize_sector_exposure
 
 store = SignalStore("sigint.duckdb")
 signals = store.query(min_confidence=0.8, limit=100_000)
@@ -128,6 +128,9 @@ store.close()
 
 report = rank_signals(signals, limit=20)
 print(report.to_markdown())
+
+sector_report = summarize_sector_exposure(signals, limit=5)
+print(sector_report.to_json())
 ```
 
 ### CLI
@@ -143,6 +146,10 @@ alphasig query --ticker AAPL --type risk_change --min-strength 0.7
 alphasig rank --db sigint.duckdb --min-confidence 0.8 --format markdown \
   --output reports/ranking.md
 
+# Summarize directional exposure by sector
+alphasig sectors --db sigint.duckdb --exclude-unknown --format json \
+  --output reports/sector_exposure.json
+
 # Launch REST API
 alphasig serve --port 8080
 ```
@@ -151,6 +158,10 @@ alphasig serve --port 8080
 ticker by confidence-weighted directional strength, includes signal decay when
 `--as-of` is supplied, and can emit an analyst-friendly table, JSON, or
 Markdown report.
+
+`sectors` uses the same offline scoring model grouped through the built-in
+sector map, making it useful for spotting concentrated bullish or bearish
+portfolio exposure before a backtest or daily review.
 
 ### REST API
 

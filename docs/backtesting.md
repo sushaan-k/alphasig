@@ -95,6 +95,30 @@ report = rank_signals(signals, limit=25)
 print(report.to_json())
 ```
 
+For portfolio construction, summarize the same directional exposure by sector:
+
+```bash
+sigint sectors --db sigint.duckdb --min-confidence 0.8 --limit 5
+sigint sectors --db sigint.duckdb --exclude-unknown --format markdown \
+  --output sector_exposure.md
+```
+
+```python
+from sigint import SignalStore, summarize_sector_exposure
+
+store = SignalStore("sigint.duckdb")
+signals = store.query(min_confidence=0.8, limit=100_000)
+store.close()
+
+report = summarize_sector_exposure(signals, limit=5, include_unknown=False)
+print(report.to_markdown())
+```
+
+Sector scores use the same confidence-weighted, optionally decayed signal
+strength as ticker ranking, then group tickers with the built-in sector map.
+This helps catch concentrated bearish or bullish exposure before allocating
+capital to a strategy slice.
+
 ## DuckDB Analytics
 
 For more complex queries, use the DuckDB store directly:

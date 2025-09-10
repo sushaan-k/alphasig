@@ -344,6 +344,80 @@ class TestRankCommand:
             _parse_cli_datetime("not-a-date")
 
 
+class TestSectorsCommand:
+    """Tests for the 'sectors' CLI command."""
+
+    def test_sectors_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["sectors", "--help"])
+        assert result.exit_code == 0
+        assert "--exclude-unknown" in result.output
+        assert "--min-confidence" in result.output
+
+    @patch("sigint.storage.SignalStore")
+    def test_sectors_outputs_json(
+        self,
+        mock_store_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.query.return_value = mock_signals
+
+        result = runner.invoke(
+            main,
+            [
+                "sectors",
+                "--db",
+                ":memory:",
+                "--format",
+                "json",
+                "--min-confidence",
+                "0.8",
+                "--exclude-unknown",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert '"sector_count"' in result.output
+        assert '"technology"' in result.output
+        mock_store.query.assert_called_once_with(
+            min_confidence=0.8,
+            limit=100_000,
+        )
+        mock_store.close.assert_called_once()
+
+    @patch("sigint.storage.SignalStore")
+    def test_sectors_writes_markdown_report(
+        self,
+        mock_store_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+        tmp_path,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.query.return_value = mock_signals
+        report_path = tmp_path / "reports" / "sectors.md"
+
+        result = runner.invoke(
+            main,
+            [
+                "sectors",
+                "--db",
+                ":memory:",
+                "--format",
+                "markdown",
+                "--output",
+                str(report_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Wrote sector exposure report" in result.output
+        assert "| Rank | Sector | Direction |" in report_path.read_text()
+
+
 class TestServeCommand:
     """Tests for the 'serve' CLI command."""
 

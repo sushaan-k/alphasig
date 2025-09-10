@@ -56,3 +56,19 @@ Stored signals can also be transformed into ticker-level ranking reports with
 
 The report renders as JSON or Markdown for CI artifacts, research notebooks, or
 portfolio review notes.
+
+## Sector Exposure Reports
+
+Use `sigint sectors` or `summarize_sector_exposure(signals)` to group the same
+confidence-weighted directional signals by sector. Each sector score includes:
+
+| Field | Description |
+|---|---|
+| `score` | Average confidence-weighted directional strength for the sector |
+| `gross_score` | Average confidence-weighted absolute exposure |
+| `signal_count` | Number of signals contributing to the sector |
+| `ticker_count` | Number of distinct tickers contributing to the sector |
+| `top_tickers` | Highest-impact tickers within the sector |
+
+Unknown tickers are included by default so custom universes remain visible, and
+can be omitted with `--exclude-unknown` or `include_unknown=False`.

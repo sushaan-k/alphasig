@@ -245,6 +245,84 @@ def rank(
 
 @main.command()
 @click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
+@click.option("--limit", default=None, type=int, help="Maximum sectors to display.")
+@click.option(
+    "--min-confidence",
+    default=None,
+    type=float,
+    help="Only score signals at or above this confidence.",
+)
+@click.option(
+    "--as-of",
+    "as_of_raw",
+    default=None,
+    help="Evaluate decayed signal strength at this ISO timestamp.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "--include-unknown/--exclude-unknown",
+    default=True,
+    show_default=True,
+    help="Include tickers missing from the built-in sector map.",
+)
+@click.option("--output", "-o", default=None, help="Write report to a file.")
+def sectors(
+    db: str,
+    limit: int | None,
+    min_confidence: float | None,
+    as_of_raw: str | None,
+    output_format: str,
+    include_unknown: bool,
+    output: str | None,
+) -> None:
+    """Summarize portfolio signal exposure by sector."""
+    from sigint.reporting import summarize_sector_exposure
+    from sigint.storage import SignalStore
+
+    as_of = _parse_cli_datetime(as_of_raw) if as_of_raw else None
+    store = SignalStore(db)
+    try:
+        signals = store.query(
+            min_confidence=min_confidence,
+            limit=100_000,
+        )
+    finally:
+        store.close()
+
+    report = summarize_sector_exposure(
+        signals,
+        as_of=as_of,
+        limit=limit,
+        include_unknown=include_unknown,
+    )
+    if output_format == "json":
+        rendered = report.to_json() + "\n"
+    elif output_format == "markdown":
+        rendered = report.to_markdown()
+    else:
+        rendered = ""
+        _print_sector_table(report.sectors)
+
+    if output:
+        if output_format == "table":
+            rendered = report.to_markdown()
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        console.print(f"[green]Wrote sector exposure report to {output}[/]")
+    elif rendered:
+        console.print(rendered, end="")
+
+
+@main.command()
+@click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
 @click.option("--host", default="127.0.0.1", help="Bind address.")
 @click.option("--port", default=8080, type=int, help="Bind port.")
 def serve(db: str, host: str, port: int) -> None:
@@ -346,3 +424,40 @@ def _print_ranking_table(tickers: Iterable[Any]) -> None:
 
     console.print(table)
     console.print(f"\n[bold]Ranked tickers:[/] {count}")
+
+
+def _print_sector_table(sectors: Iterable[Any]) -> None:
+    """Render a Rich table of sector exposure scores."""
+    table = Table(title="Sector Exposure", show_lines=True)
+    table.add_column("Rank", justify="right", width=5)
+    table.add_column("Sector", style="cyan", width=24)
+    table.add_column("Direction", width=10)
+    table.add_column("Score", justify="right", width=10)
+    table.add_column("Gross", justify="right", width=10)
+    table.add_column("Tickers", justify="right", width=8)
+    table.add_column("Signals", justify="right", width=8)
+    table.add_column("Latest", width=12)
+    table.add_column("Top Tickers", max_width=32)
+
+    direction_style = {
+        "bullish": "[green]bullish[/]",
+        "bearish": "[red]bearish[/]",
+        "neutral": "[dim]neutral[/]",
+    }
+
+    count = 0
+    for count, sector in enumerate(sectors, start=1):
+        table.add_row(
+            str(count),
+            sector.sector,
+            direction_style.get(sector.direction, sector.direction),
+            f"{sector.score:.4f}",
+            f"{sector.gross_score:.4f}",
+            str(sector.ticker_count),
+            str(sector.signal_count),
+            sector.latest_timestamp.date().isoformat(),
+            ", ".join(sector.top_tickers),
+        )
+
+    console.print(table)
+    console.print(f"\n[bold]Ranked sectors:[/] {count}")
