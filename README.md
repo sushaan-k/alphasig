@@ -28,6 +28,12 @@ The difference between "sentiment is positive" (useless) and "Company X just add
 
 Research shows ([Lazy Prices, Cohen et al. 2020](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1658471)) that changes in 10-K language are among the strongest predictors of future returns. sigint operationalizes this insight.
 
+## Showcase
+
+![sigint supply-chain graph](assets/supply-chain-graph.png)
+
+*Supply-chain dependency graph rendered from a small local signal set using the built-in graph utilities.*
+
 ## Architecture
 
 ```mermaid
