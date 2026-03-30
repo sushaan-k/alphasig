@@ -184,6 +184,16 @@ sigint/
     └── backtesting.md       # Backtesting integration guide
 ```
 
+## Demo
+
+Run the offline walkthrough with:
+
+```bash
+uv run python examples/demo.py
+```
+
+For EDGAR extraction and portfolio-scale signal analysis, see `examples/`.
+
 ## Development
 
 ```bash
