@@ -169,6 +169,11 @@ def parse_filing(filing: Filing) -> list[FilingSection]:
     """
     if not filing.raw_html:
         raise ParsingError(f"Filing {filing.accession_number} has no raw_html to parse")
+    if len(filing.raw_html) < 500:
+        raise ParsingError(
+            f"Filing {filing.accession_number} raw_html is too short "
+            f"({len(filing.raw_html)} chars) — likely truncated or empty"
+        )
 
     try:
         soup = BeautifulSoup(filing.raw_html, "lxml")

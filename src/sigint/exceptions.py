@@ -19,6 +19,10 @@ class EdgarRateLimitError(EdgarError):
     """Raised when EDGAR rate-limits our requests (HTTP 429)."""
 
 
+class EdgarTransientError(EdgarError):
+    """Raised on transient network errors (timeouts, 5xx) that should be retried."""
+
+
 class EdgarNotFoundError(EdgarError):
     """Requested filing or entity does not exist on EDGAR."""
 

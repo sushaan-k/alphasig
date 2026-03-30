@@ -172,15 +172,30 @@ def _indicators_to_signals(
     )
     composite_strength = min(1.0, weighted_sum / max(len(indicators), 1))
 
-    # If we have strong strategic-alternatives language, it's very bullish
-    # (target company) -- but we mark as neutral since we don't know
-    # the direction without knowing if this company is acquirer or target
-    direction = SignalDirection.NEUTRAL
-    if any(
+    # Infer direction from the categories present:
+    # - strategic_alternatives / advisor_engagement / board_change strongly
+    #   suggest the company is a *target* expecting an acquisition premium → BULLISH
+    # - cash_positioning alone (large cash build without deal language) often
+    #   signals the company may be an *acquirer* (cash outflow risk) → BEARISH
+    # - related_party alone is ambiguous → NEUTRAL
+    target_categories = {"strategic_alternatives", "advisor_engagement", "board_change"}
+    acquirer_categories = {"cash_positioning"}
+
+    has_target_signal = any(
+        i.category in target_categories and i.confidence > 0.6 for i in indicators
+    )
+    has_strong_strategic = any(
         i.category == "strategic_alternatives" and i.confidence > 0.7
         for i in indicators
-    ):
+    )
+    target_only = all(i.category in acquirer_categories | {"related_party"} for i in indicators)
+
+    if has_target_signal or has_strong_strategic:
         direction = SignalDirection.BULLISH  # Target premium expected
+    elif target_only and any(i.category == "cash_positioning" for i in indicators):
+        direction = SignalDirection.BEARISH  # Likely acquirer — capital outflow risk
+    else:
+        direction = SignalDirection.NEUTRAL
 
     ticker = indicators[0].ticker
     filed_date = indicators[0].filed_date

@@ -38,8 +38,11 @@ class TestParseFiling:
             parse_filing(empty)
 
     def test_returns_empty_for_no_sections(self, sample_filing: Filing) -> None:
+        # Use a long-enough HTML document that passes the minimum size guard
+        # but contains no recognised SEC section headers.
+        body = "<p>No SEC items here. Just some filler text.</p>" * 15
         plain = sample_filing.model_copy(
-            update={"raw_html": "<html><body><p>No items here.</p></body></html>"}
+            update={"raw_html": f"<html><body>{body}</body></html>"}
         )
         sections = parse_filing(plain)
         assert sections == []

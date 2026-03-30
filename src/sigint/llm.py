@@ -222,10 +222,17 @@ class LLMClient:
         for item in data:
             try:
                 results.append(response_model.model_validate(item))
-            except Exception:
-                logger.warning(
+            except Exception as exc:
+                logger.error(
                     "llm_item_validation_failed",
                     model=response_model.__name__,
                     item=str(item)[:200],
+                    error=str(exc),
                 )
+        if not results and data:
+            logger.error(
+                "llm_extraction_fully_failed",
+                model=response_model.__name__,
+                item_count=len(data),
+            )
         return results
