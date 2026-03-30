@@ -43,25 +43,25 @@ async def main() -> None:
     high = signals.risk_changes(severity="HIGH")
 
     if len(critical) > 0:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  CRITICAL RISK CHANGES ({len(critical)})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for sig in critical:
             print(f"  [{sig.ticker}] {sig.context}")
             if sig.related_tickers:
                 print(f"    Related: {', '.join(sig.related_tickers)}")
 
     if len(high) > 0:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  HIGH SEVERITY CHANGES ({len(high)})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for sig in high:
             print(f"  [{sig.ticker}] {sig.context}")
 
     # Per-company summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  PER-COMPANY SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for ticker in WATCHLIST:
         ticker_risks = risk_signals.by_ticker(ticker)
         bearish = ticker_risks.by_direction("bearish")
