@@ -188,7 +188,9 @@ def _indicators_to_signals(
         i.category == "strategic_alternatives" and i.confidence > 0.7
         for i in indicators
     )
-    target_only = all(i.category in acquirer_categories | {"related_party"} for i in indicators)
+    target_only = all(
+        i.category in acquirer_categories | {"related_party"} for i in indicators
+    )
 
     if has_target_signal or has_strong_strategic:
         direction = SignalDirection.BULLISH  # Target premium expected
