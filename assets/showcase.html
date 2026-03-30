@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sigint showcase</title>
+  <style>
+    :root {
+      --bg: #08111d;
+      --panel: rgba(11, 18, 32, 0.92);
+      --border: rgba(148, 163, 184, 0.12);
+      --text: #f8fafc;
+      --muted: #93a4bf;
+      --orange: #f97316;
+      --pink: #fb7185;
+      --blue: #38bdf8;
+      --green: #22c55e;
+      --violet: #a78bfa;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.10), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.12), transparent 30%),
+        linear-gradient(180deg, #08111d 0%, #050b14 100%);
+    }
+
+    .frame {
+      width: 1400px;
+      height: 860px;
+      margin: 0 auto;
+      padding: 54px 58px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 30px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 60px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin-top: 12px;
+      font-size: 22px;
+      line-height: 1.4;
+      color: var(--muted);
+      max-width: 920px;
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: 1.45fr 0.85fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .graph {
+      position: relative;
+      min-height: 0;
+    }
+
+    .node {
+      position: absolute;
+      width: 112px;
+      height: 112px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      font-weight: 800;
+      color: #04111d;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.26);
+      border: 3px solid rgba(226, 232, 240, 0.9);
+    }
+
+    .small {
+      width: 92px;
+      height: 92px;
+      font-size: 24px;
+    }
+
+    .edge {
+      position: absolute;
+      height: 4px;
+      transform-origin: left center;
+      border-radius: 999px;
+      opacity: 0.96;
+    }
+
+    .label {
+      position: absolute;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      padding: 30px 30px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 36px;
+      letter-spacing: -0.04em;
+    }
+
+    .panel .sub {
+      margin: 0 0 26px;
+      font-size: 17px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .card {
+      padding: 18px 20px 20px;
+      border-radius: 18px;
+      background: rgba(7, 17, 31, 0.82);
+      border: 1px solid rgba(148, 163, 184, 0.10);
+    }
+
+    .k {
+      font-size: 14px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+
+    .v {
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: -0.03em;
+    }
+
+    .small-v {
+      font-size: 24px;
+    }
+
+    .note {
+      margin-top: 22px;
+      color: #7f90aa;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div>
+      <h1>sigint supply-chain exposure map</h1>
+      <div class="subtitle">
+        A small local signal set rendered as an exposure map. This is the shape of the product: filing language becomes a graph you can query, backtest, and carry into event-driven research.
+      </div>
+    </div>
+
+    <section class="content">
+      <div class="graph">
+        <div class="edge" style="left: 200px; top: 262px; width: 460px; background: linear-gradient(90deg, var(--pink), var(--pink)); transform: rotate(14deg);"></div>
+        <div class="edge" style="left: 190px; top: 514px; width: 486px; background: linear-gradient(90deg, var(--green), var(--orange)); transform: rotate(-12deg);"></div>
+        <div class="edge" style="left: 378px; top: 620px; width: 332px; background: linear-gradient(90deg, var(--blue), var(--blue)); transform: rotate(-47deg);"></div>
+
+        <div class="label" style="left: 372px; top: 246px; color: var(--pink);">advanced node dependence</div>
+        <div class="label" style="left: 392px; top: 468px; color: var(--orange);">GPU wafer capacity</div>
+        <div class="label" style="left: 498px; top: 496px; color: var(--blue);">leading-edge supply</div>
+
+        <div class="node small" style="left: 118px; top: 170px; background: #60a5fa;">AAPL</div>
+        <div class="node small" style="left: 90px; top: 446px; background: #22c55e;">NVDA</div>
+        <div class="node small" style="left: 356px; top: 584px; background: #38bdf8;">AMD</div>
+        <div class="node" style="left: 612px; top: 308px; background: #f97316;">TSMC</div>
+      </div>
+
+      <aside class="panel">
+        <div>
+          <h2>What this graph says</h2>
+          <p class="sub">Three separate issuers collapse onto one upstream manufacturing node. That is a research object, not just text.</p>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="k">Direct dependents</div>
+            <div class="v">AAPL, NVDA, AMD</div>
+          </div>
+          <div class="card">
+            <div class="k">Concentration signal</div>
+            <div class="v small-v" style="color: var(--orange);">Multiple filings point at the same advanced-node supplier.</div>
+          </div>
+          <div class="card">
+            <div class="k">Use case</div>
+            <div class="v small-v">Backtest supplier shocks before earnings, export-control headlines, or packaging bottlenecks.</div>
+          </div>
+        </div>
+
+        <div class="note">sigint is strongest when it turns narrative disclosures into structural exposure surfaces like this one.</div>
+      </aside>
+    </section>
+  </div>
+</body>
+</html>
