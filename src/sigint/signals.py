@@ -20,6 +20,7 @@ from sigint.models import (
     SignalType,
     SupplyChainEdge,
 )
+from sigint.sectors import Sector, classify_sector
 
 logger = structlog.get_logger()
 
@@ -95,6 +96,21 @@ class SignalCollection:
         """Return signals within a time range (inclusive)."""
         return SignalCollection(
             [s for s in self._signals if start <= s.timestamp <= end]
+        )
+
+    def by_sector(self, sector: Sector | str) -> SignalCollection:
+        """Return signals whose ticker belongs to *sector*.
+
+        Args:
+            sector: A :class:`Sector` member or its string value.
+
+        Returns:
+            Filtered :class:`SignalCollection`.
+        """
+        if isinstance(sector, str):
+            sector = Sector(sector)
+        return SignalCollection(
+            [s for s in self._signals if classify_sector(s.ticker) == sector]
         )
 
     # -- Aggregation -----------------------------------------------------------
