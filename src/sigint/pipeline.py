@@ -243,6 +243,8 @@ class Pipeline:
                             )
                             all_signals.append(stamped)
 
+        all_signals = _deduplicate_amendment_signals(all_signals)
+
         logger.info(
             "ticker_complete",
             ticker=ticker,
@@ -250,6 +252,35 @@ class Pipeline:
             signals=len(all_signals),
         )
         return all_signals
+
+
+def _deduplicate_amendment_signals(signals: list[Signal]) -> list[Signal]:
+    """Remove duplicate signals caused by filing amendments.
+
+    When the same signal (same ticker, signal_type, direction, and context)
+    appears in both the original filing (e.g. 10-K) and its amendment
+    (10-K/A), keep only the one from the most recently filed document.
+
+    This handles the common case where a company files a 10-K/A that
+    supersedes the original 10-K -- the amended version should be the
+    single source of truth.
+    """
+    if not signals:
+        return signals
+
+    # Key: the identity of the signal (excluding source_filing and timestamp)
+    seen: dict[tuple[str, str, str, str], Signal] = {}
+    for sig in signals:
+        key = (sig.ticker, sig.signal_type.value, sig.direction.value, sig.context)
+        existing = seen.get(key)
+        if existing is None or sig.timestamp > existing.timestamp:
+            seen[key] = sig
+
+    deduped = list(seen.values())
+    removed = len(signals) - len(deduped)
+    if removed:
+        logger.info("signals_deduplicated", removed=removed, kept=len(deduped))
+    return deduped
 
 
 async def _run_engine(
