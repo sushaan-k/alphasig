@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import respx
 
 from sigint.exceptions import ExtractionError, PipelineError
-from sigint.pipeline import Pipeline, _resolve_engines, _run_engine
+from sigint.models import Signal, SignalDirection, SignalType
+from sigint.pipeline import (
+    Pipeline,
+    _deduplicate_amendment_signals,
+    _resolve_engines,
+    _run_engine,
+)
 
 
 class TestPipelineHelpers:
@@ -406,3 +413,91 @@ class TestPipelineIntegration:
                 engines=["supply_chain"],
                 store=False,
             )
+
+
+class TestDeduplicateAmendmentSignals:
+    """Tests for _deduplicate_amendment_signals."""
+
+    def _make_signal(
+        self,
+        *,
+        ticker: str = "AAPL",
+        signal_type: SignalType = SignalType.RISK_CHANGE,
+        direction: SignalDirection = SignalDirection.BEARISH,
+        context: str = "Supply chain concentration risk",
+        timestamp: datetime | None = None,
+        source_filing: str = "https://sec.gov/10-K",
+    ) -> Signal:
+        return Signal(
+            timestamp=timestamp or datetime(2024, 11, 1, tzinfo=UTC),
+            ticker=ticker,
+            signal_type=signal_type,
+            direction=direction,
+            strength=0.8,
+            confidence=0.9,
+            context=context,
+            source_filing=source_filing,
+        )
+
+    def test_empty_input(self) -> None:
+        assert _deduplicate_amendment_signals([]) == []
+
+    def test_no_duplicates_unchanged(self) -> None:
+        signals = [
+            self._make_signal(context="Risk A"),
+            self._make_signal(context="Risk B"),
+        ]
+        result = _deduplicate_amendment_signals(signals)
+        assert len(result) == 2
+
+    def test_duplicate_keeps_most_recent(self) -> None:
+        """When 10-K and 10-K/A produce the same signal, keep the amendment."""
+        original = self._make_signal(
+            timestamp=datetime(2024, 11, 1, tzinfo=UTC),
+            source_filing="https://sec.gov/10-K",
+        )
+        amendment = self._make_signal(
+            timestamp=datetime(2024, 12, 15, tzinfo=UTC),
+            source_filing="https://sec.gov/10-K-A",
+        )
+        result = _deduplicate_amendment_signals([original, amendment])
+        assert len(result) == 1
+        assert result[0].source_filing == "https://sec.gov/10-K-A"
+
+    def test_different_signal_types_not_deduped(self) -> None:
+        """Signals with different types should both be kept."""
+        risk = self._make_signal(signal_type=SignalType.RISK_CHANGE)
+        supply = self._make_signal(signal_type=SignalType.SUPPLY_CHAIN)
+        result = _deduplicate_amendment_signals([risk, supply])
+        assert len(result) == 2
+
+    def test_different_tickers_not_deduped(self) -> None:
+        aapl = self._make_signal(ticker="AAPL")
+        msft = self._make_signal(ticker="MSFT")
+        result = _deduplicate_amendment_signals([aapl, msft])
+        assert len(result) == 2
+
+    def test_multiple_duplicates_across_tickers(self) -> None:
+        """Each ticker's duplicates are resolved independently."""
+        signals = [
+            self._make_signal(
+                ticker="AAPL",
+                timestamp=datetime(2024, 11, 1, tzinfo=UTC),
+            ),
+            self._make_signal(
+                ticker="AAPL",
+                timestamp=datetime(2024, 12, 1, tzinfo=UTC),
+            ),
+            self._make_signal(
+                ticker="MSFT",
+                timestamp=datetime(2024, 11, 1, tzinfo=UTC),
+            ),
+            self._make_signal(
+                ticker="MSFT",
+                timestamp=datetime(2024, 12, 1, tzinfo=UTC),
+            ),
+        ]
+        result = _deduplicate_amendment_signals(signals)
+        assert len(result) == 2
+        tickers = {s.ticker for s in result}
+        assert tickers == {"AAPL", "MSFT"}
