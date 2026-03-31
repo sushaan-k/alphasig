@@ -430,6 +430,7 @@ class TestDeduplicateAmendmentSignals:
         context: str = "Supply chain concentration risk",
         timestamp: datetime | None = None,
         source_filing: str = "https://sec.gov/10-K",
+        metadata: dict[str, str] | None = None,
     ) -> Signal:
         return Signal(
             timestamp=timestamp or datetime(2024, 11, 1, tzinfo=UTC),
@@ -440,6 +441,7 @@ class TestDeduplicateAmendmentSignals:
             confidence=0.9,
             context=context,
             source_filing=source_filing,
+            metadata=metadata or {},
         )
 
     def test_empty_input(self) -> None:
@@ -458,10 +460,20 @@ class TestDeduplicateAmendmentSignals:
         original = self._make_signal(
             timestamp=datetime(2024, 11, 1, tzinfo=UTC),
             source_filing="https://sec.gov/10-K",
+            metadata={
+                "_filing_accession": "0001",
+                "_filing_type": "10-K",
+                "_period_of_report": "2024-09-30",
+            },
         )
         amendment = self._make_signal(
             timestamp=datetime(2024, 12, 15, tzinfo=UTC),
             source_filing="https://sec.gov/10-K-A",
+            metadata={
+                "_filing_accession": "0002",
+                "_filing_type": "10-K/A",
+                "_period_of_report": "2024-09-30",
+            },
         )
         result = _deduplicate_amendment_signals([original, amendment])
         assert len(result) == 1
@@ -504,6 +516,35 @@ class TestDeduplicateAmendmentSignals:
         assert len(result) == 2
         tickers = {s.ticker for s in result}
         assert tickers == {"AAPL", "MSFT"}
+
+    def test_repeated_signals_from_distinct_filings_are_preserved(self) -> None:
+        """Recurring disclosures across separate filings should not collapse."""
+        q1 = self._make_signal(
+            timestamp=datetime(2024, 3, 31, tzinfo=UTC),
+            source_filing="https://sec.gov/Archives/0001/q1-10q.htm",
+            metadata={
+                "_filing_accession": "0001",
+                "_filing_type": "10-Q",
+                "_period_of_report": "2024-03-31",
+            },
+        )
+        q2 = self._make_signal(
+            timestamp=datetime(2024, 6, 30, tzinfo=UTC),
+            source_filing="https://sec.gov/Archives/0002/q2-10q.htm",
+            metadata={
+                "_filing_accession": "0002",
+                "_filing_type": "10-Q",
+                "_period_of_report": "2024-06-30",
+            },
+        )
+
+        result = _deduplicate_amendment_signals([q1, q2])
+
+        assert len(result) == 2
+        assert {signal.source_filing for signal in result} == {
+            "https://sec.gov/Archives/0001/q1-10q.htm",
+            "https://sec.gov/Archives/0002/q2-10q.htm",
+        }
 
 
 class TestConcurrentFilingDownloads:

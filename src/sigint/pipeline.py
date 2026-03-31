@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 
@@ -265,8 +266,19 @@ class Pipeline:
                     else:
                         # Stamp each signal with the filing URL
                         for sig in engine_result:
+                            stamped_metadata = dict(sig.metadata)
+                            stamped_metadata.update(
+                                {
+                                    "_filing_accession": filing.accession_number,
+                                    "_filing_type": filing.filing_type.value,
+                                    "_period_of_report": filing.period_of_report.isoformat(),
+                                }
+                            )
                             stamped = sig.model_copy(
-                                update={"source_filing": filing.url}
+                                update={
+                                    "source_filing": filing.url,
+                                    "metadata": stamped_metadata,
+                                }
                             )
                             all_signals.append(stamped)
 
@@ -295,10 +307,17 @@ def _deduplicate_amendment_signals(signals: list[Signal]) -> list[Signal]:
     if not signals:
         return signals
 
-    # Key: the identity of the signal (excluding source_filing and timestamp)
-    seen: dict[tuple[str, str, str, str], Signal] = {}
+    # Only dedupe true amendment families; repeated signals across separate
+    # quarterly/annual filings must remain distinct for time-series analysis.
+    seen: dict[tuple[str, str, str, str, str], Signal] = {}
     for sig in signals:
-        key = (sig.ticker, sig.signal_type.value, sig.direction.value, sig.context)
+        key = (
+            sig.ticker,
+            sig.signal_type.value,
+            sig.direction.value,
+            sig.context,
+            _filing_family(sig),
+        )
         existing = seen.get(key)
         if existing is None or sig.timestamp > existing.timestamp:
             seen[key] = sig
@@ -308,6 +327,41 @@ def _deduplicate_amendment_signals(signals: list[Signal]) -> list[Signal]:
     if removed:
         logger.info("signals_deduplicated", removed=removed, kept=len(deduped))
     return deduped
+
+
+def _filing_family(sig: Signal) -> str:
+    """Return a stable filing-family identifier for amendment dedupe.
+
+    The family must collapse an original filing and its amendment to the
+    same value while keeping unrelated recurring filings separate.
+    """
+    filing_type = str(sig.metadata.get("_filing_type", "")).strip().upper()
+    period = str(sig.metadata.get("_period_of_report", "")).strip()
+    if filing_type and period:
+        return f"{_base_filing_type(filing_type)}|{period}"
+
+    accession = str(sig.metadata.get("_filing_accession", "")).strip()
+    if accession:
+        return accession
+
+    source = sig.source_filing.strip().lower()
+    if not source:
+        return ""
+
+    # Normalize obvious amendment suffixes in simple URLs/labels such as
+    # ``10-K-A`` or ``10-Q/A`` while preserving accession/path uniqueness.
+    normalized = re.sub(r"(?i)([-_/]?a)(?=(?:$|[?#.]))", "", source)
+    normalized = re.sub(r"(?i)(/a)(?=(?:$|[?#]))", "", normalized)
+    return normalized
+
+
+def _base_filing_type(filing_type: str) -> str:
+    """Normalize amendment suffixes to the base SEC form type."""
+    if filing_type.endswith("/A"):
+        return filing_type[:-2]
+    if filing_type.endswith("-A"):
+        return filing_type[:-2]
+    return filing_type
 
 
 async def _run_engine(
