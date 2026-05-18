@@ -6,7 +6,10 @@ with convenience methods for filtering, aggregation, and export.
 
 from __future__ import annotations
 
+import math
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,8 +23,50 @@ from sigint.models import (
     SignalType,
     SupplyChainEdge,
 )
+from sigint.sectors import Sector, classify_sector
 
 logger = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class CorrelationMatrix:
+    """Result of a pairwise signal-type correlation analysis.
+
+    Attributes:
+        signal_types: Ordered list of signal type labels (row / column headers).
+        matrix: Square list-of-lists of Pearson correlation coefficients.
+        ticker_count: Number of tickers that contributed to the calculation.
+    """
+
+    signal_types: list[str]
+    matrix: list[list[float]]
+    ticker_count: int = 0
+
+    def get(self, type_a: str, type_b: str) -> float:
+        """Look up correlation between two signal types."""
+        idx_a = self.signal_types.index(type_a)
+        idx_b = self.signal_types.index(type_b)
+        return self.matrix[idx_a][idx_b]
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float:
+    """Compute Pearson correlation coefficient between two equal-length series.
+
+    Returns 0.0 when either series has zero variance (avoids division by
+    zero).
+    """
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    denom = math.sqrt(var_x * var_y)
+    if denom == 0.0:
+        return 0.0
+    return cov / denom
 
 
 class SignalCollection:
@@ -97,6 +142,85 @@ class SignalCollection:
             [s for s in self._signals if start <= s.timestamp <= end]
         )
 
+    def by_sector(self, sector: Sector | str) -> SignalCollection:
+        """Return signals whose ticker belongs to *sector*.
+
+        Args:
+            sector: A :class:`Sector` member or its string value.
+
+        Returns:
+            Filtered :class:`SignalCollection`.
+        """
+        if isinstance(sector, str):
+            sector = Sector(sector)
+        return SignalCollection(
+            [s for s in self._signals if classify_sector(s.ticker) == sector]
+        )
+
+    def where(
+        self,
+        *,
+        ticker: str | None = None,
+        tickers: Sequence[str] | None = None,
+        signal_type: SignalType | str | None = None,
+        signal_types: Sequence[SignalType | str] | None = None,
+        direction: SignalDirection | str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        min_strength: float | None = None,
+        min_confidence: float | None = None,
+    ) -> SignalCollection:
+        """Apply common filters in one pass.
+
+        Plural filters match any value within that dimension, while different
+        dimensions are combined with AND semantics.
+        """
+        if ticker is not None and tickers is not None:
+            raise ValueError("Cannot specify both ticker and tickers")
+        if signal_type is not None and signal_types is not None:
+            raise ValueError("Cannot specify both signal_type and signal_types")
+        if isinstance(tickers, str):
+            raise TypeError("tickers must be a sequence of ticker strings")
+        if isinstance(signal_types, str):
+            raise TypeError("signal_types must be a sequence of signal types")
+
+        results = self._signals
+        if ticker is not None:
+            ticker = ticker.upper()
+            results = [signal for signal in results if signal.ticker == ticker]
+        if tickers is not None:
+            ticker_set = {item.upper() for item in tickers}
+            results = [signal for signal in results if signal.ticker in ticker_set]
+        if signal_type is not None:
+            sig_type = (
+                SignalType(signal_type) if isinstance(signal_type, str) else signal_type
+            )
+            results = [signal for signal in results if signal.signal_type == sig_type]
+        if signal_types is not None:
+            sig_types = {
+                SignalType(item) if isinstance(item, str) else item
+                for item in signal_types
+            }
+            results = [signal for signal in results if signal.signal_type in sig_types]
+        if direction is not None:
+            sig_direction = (
+                SignalDirection(direction) if isinstance(direction, str) else direction
+            )
+            results = [
+                signal for signal in results if signal.direction == sig_direction
+            ]
+        if start is not None:
+            results = [signal for signal in results if signal.timestamp >= start]
+        if end is not None:
+            results = [signal for signal in results if signal.timestamp <= end]
+        if min_strength is not None:
+            results = [signal for signal in results if signal.strength >= min_strength]
+        if min_confidence is not None:
+            results = [
+                signal for signal in results if signal.confidence >= min_confidence
+            ]
+        return SignalCollection(results)
+
     # -- Aggregation -----------------------------------------------------------
 
     def risk_changes(self, severity: str | None = None) -> SignalCollection:
@@ -156,6 +280,82 @@ class SignalCollection:
         from sigint.graph import SupplyChainGraph
 
         return SupplyChainGraph(self.supply_chain_edges())
+
+    # -- Correlation -----------------------------------------------------------
+
+    def correlate(self, *signal_types: SignalType | str) -> CorrelationMatrix:
+        """Compute pairwise Pearson correlation of signal strengths across tickers.
+
+        For each ticker, the average strength per signal type is computed.
+        Then the Pearson correlation coefficient is calculated pairwise
+        across all tickers that have at least one signal of each requested
+        type.
+
+        Args:
+            *signal_types: Two or more signal types to compare.  Accepts
+                :class:`SignalType` members or plain strings.
+
+        Returns:
+            A :class:`CorrelationMatrix` with one row/column per signal type.
+
+        Raises:
+            ValueError: If fewer than two signal types are provided.
+        """
+        types = [SignalType(t) if isinstance(t, str) else t for t in signal_types]
+        if len(types) < 2:
+            raise ValueError("correlate() requires at least two signal types")
+
+        # Build ticker -> signal_type -> [strength, ...]
+        ticker_map: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for sig in self._signals:
+            if sig.signal_type in types:
+                ticker_map[sig.ticker][sig.signal_type.value].append(sig.strength)
+
+        # Reduce to average strength per (ticker, type)
+        type_labels = [t.value for t in types]
+
+        # Only keep tickers that have data for ALL requested types
+        valid_tickers = [
+            tk
+            for tk, type_strengths in ticker_map.items()
+            if all(tl in type_strengths for tl in type_labels)
+        ]
+
+        n = len(type_labels)
+        matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
+
+        if len(valid_tickers) < 2:
+            # Not enough data -- return identity matrix
+            for i in range(n):
+                matrix[i][i] = 1.0
+            return CorrelationMatrix(
+                signal_types=type_labels,
+                matrix=matrix,
+                ticker_count=len(valid_tickers),
+            )
+
+        # Build vectors: one value per ticker for each type
+        vectors: dict[str, list[float]] = {}
+        for tl in type_labels:
+            vectors[tl] = [
+                sum(ticker_map[tk][tl]) / len(ticker_map[tk][tl])
+                for tk in valid_tickers
+            ]
+
+        for i, ti in enumerate(type_labels):
+            for j, tj in enumerate(type_labels):
+                if i == j:
+                    matrix[i][j] = 1.0
+                else:
+                    matrix[i][j] = _pearson(vectors[ti], vectors[tj])
+
+        return CorrelationMatrix(
+            signal_types=type_labels,
+            matrix=matrix,
+            ticker_count=len(valid_tickers),
+        )
 
     # -- Serialisation ---------------------------------------------------------
 

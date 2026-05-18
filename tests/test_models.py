@@ -112,6 +112,85 @@ class TestSignal:
                 source_filing="",
             )
 
+    def test_decay_rate_defaults_to_zero(self) -> None:
+        signal = Signal(
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            ticker="AAPL",
+            signal_type=SignalType.RISK_CHANGE,
+            direction=SignalDirection.BEARISH,
+            strength=0.8,
+            confidence=0.9,
+            context="test",
+            source_filing="",
+        )
+        assert signal.decay_rate == 0.0
+
+    def test_current_strength_no_decay(self) -> None:
+        """With decay_rate=0 the strength never changes."""
+        signal = Signal(
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            ticker="AAPL",
+            signal_type=SignalType.RISK_CHANGE,
+            direction=SignalDirection.BEARISH,
+            strength=0.8,
+            confidence=0.9,
+            context="test",
+            source_filing="",
+            decay_rate=0.0,
+        )
+        future = datetime(2025, 6, 15, tzinfo=UTC)
+        assert signal.current_strength(as_of=future) == 0.8
+
+    def test_current_strength_decays_over_time(self) -> None:
+        """Exponential decay reduces strength as time passes."""
+        signal = Signal(
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            ticker="AAPL",
+            signal_type=SignalType.RISK_CHANGE,
+            direction=SignalDirection.BEARISH,
+            strength=1.0,
+            confidence=0.9,
+            context="test",
+            source_filing="",
+            decay_rate=0.01,  # half-life ~69 days
+        )
+        # After 69 days, strength should be approximately 0.5
+        after_69_days = datetime(2024, 3, 10, tzinfo=UTC)  # ~69 days
+        decayed = signal.current_strength(as_of=after_69_days)
+        assert 0.45 < decayed < 0.55
+
+    def test_current_strength_before_timestamp(self) -> None:
+        """Evaluating before the signal timestamp returns original strength."""
+        signal = Signal(
+            timestamp=datetime(2024, 6, 1, tzinfo=UTC),
+            ticker="AAPL",
+            signal_type=SignalType.SUPPLY_CHAIN,
+            direction=SignalDirection.NEUTRAL,
+            strength=0.9,
+            confidence=0.8,
+            context="test",
+            source_filing="",
+            decay_rate=0.01,
+        )
+        before = datetime(2024, 1, 1, tzinfo=UTC)
+        assert signal.current_strength(as_of=before) == 0.9
+
+    def test_current_strength_far_future_approaches_zero(self) -> None:
+        """After a very long time the signal should be near zero."""
+        signal = Signal(
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            ticker="MSFT",
+            signal_type=SignalType.TONE_SHIFT,
+            direction=SignalDirection.BEARISH,
+            strength=0.9,
+            confidence=0.8,
+            context="test",
+            source_filing="",
+            decay_rate=0.01,
+        )
+        far_future = datetime(2030, 1, 1, tzinfo=UTC)
+        assert signal.current_strength(as_of=far_future) < 0.01
+
 
 class TestFiling:
     """Tests for the Filing model."""
