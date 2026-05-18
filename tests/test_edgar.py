@@ -361,7 +361,11 @@ class TestEdgarClient:
         async with EdgarClient(
             user_agent="Test test@example.com", cache_dir=None
         ) as client:
-            results = await client.search_full_text("supply chain", limit=2)
+            with pytest.warns(
+                UserWarning,
+                match="search_full_text\\(\\) is experimental",
+            ):
+                results = await client.search_full_text("supply chain", limit=2)
             assert len(results) == 2
 
     def test_cache_dir_creation(self, tmp_path) -> None:
