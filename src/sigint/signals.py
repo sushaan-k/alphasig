@@ -157,6 +157,46 @@ class SignalCollection:
             [s for s in self._signals if classify_sector(s.ticker) == sector]
         )
 
+    def where(
+        self,
+        *,
+        ticker: str | None = None,
+        signal_type: SignalType | str | None = None,
+        direction: SignalDirection | str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        min_strength: float | None = None,
+        min_confidence: float | None = None,
+    ) -> SignalCollection:
+        """Apply multiple common filters in a single pass."""
+        results = self._signals
+        if ticker is not None:
+            ticker = ticker.upper()
+            results = [signal for signal in results if signal.ticker == ticker]
+        if signal_type is not None:
+            sig_type = (
+                SignalType(signal_type) if isinstance(signal_type, str) else signal_type
+            )
+            results = [signal for signal in results if signal.signal_type == sig_type]
+        if direction is not None:
+            sig_direction = (
+                SignalDirection(direction) if isinstance(direction, str) else direction
+            )
+            results = [
+                signal for signal in results if signal.direction == sig_direction
+            ]
+        if start is not None:
+            results = [signal for signal in results if signal.timestamp >= start]
+        if end is not None:
+            results = [signal for signal in results if signal.timestamp <= end]
+        if min_strength is not None:
+            results = [signal for signal in results if signal.strength >= min_strength]
+        if min_confidence is not None:
+            results = [
+                signal for signal in results if signal.confidence >= min_confidence
+            ]
+        return SignalCollection(results)
+
     # -- Aggregation -----------------------------------------------------------
 
     def risk_changes(self, severity: str | None = None) -> SignalCollection:
@@ -237,9 +277,7 @@ class SignalCollection:
         Raises:
             ValueError: If fewer than two signal types are provided.
         """
-        types = [
-            SignalType(t) if isinstance(t, str) else t for t in signal_types
-        ]
+        types = [SignalType(t) if isinstance(t, str) else t for t in signal_types]
         if len(types) < 2:
             raise ValueError("correlate() requires at least two signal types")
 

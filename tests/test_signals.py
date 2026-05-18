@@ -205,6 +205,30 @@ class TestSignalCollection:
         exact = coll.above_confidence(0.92)
         assert all(s.confidence >= 0.92 for s in exact)
 
+    def test_where_combines_filters(self, sample_signals: list[Signal]) -> None:
+        coll = SignalCollection(sample_signals)
+        start = datetime(2024, 10, 1, tzinfo=UTC)
+        end = datetime(2024, 12, 1, tzinfo=UTC)
+        filtered = coll.where(
+            ticker="AAPL",
+            direction="bearish",
+            start=start,
+            end=end,
+            min_strength=0.5,
+            min_confidence=0.8,
+        )
+        assert len(filtered) == 1
+        assert filtered[0].ticker == "AAPL"
+        assert filtered[0].direction == SignalDirection.BEARISH
+
+    def test_where_filters_by_signal_type_string(
+        self, sample_signals: list[Signal]
+    ) -> None:
+        coll = SignalCollection(sample_signals)
+        filtered = coll.where(signal_type="risk_change")
+        assert len(filtered) == 1
+        assert filtered[0].signal_type == SignalType.RISK_CHANGE
+
 
 class TestPearson:
     """Tests for the _pearson helper."""
