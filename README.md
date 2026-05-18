@@ -1,14 +1,15 @@
-# sigint
+# alphasig
 
-[![CI](https://github.com/sushaan-k/sigint/actions/workflows/ci.yml/badge.svg)](https://github.com/sushaan-k/sigint/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/sushaan-k/alphasig/actions/workflows/ci.yml/badge.svg)](https://github.com/sushaan-k/alphasig/actions)
+[![PyPI](https://img.shields.io/pypi/v/alphasig.svg)](https://pypi.org/project/alphasig/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/alphasig.svg)](https://pypi.org/project/alphasig/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 **Causal signal extraction from SEC filings using LLMs.**
 
-`sigint` turns filing text into structured, timestamped trading and monitoring
-signals. The focus is not generic sentiment, but directional changes in risk
-language, supplier exposure, M&A patterns, and topic-specific management tone.
+`alphasig` turns filing text into structured, timestamped trading and monitoring signals. The focus is not generic sentiment, but directional changes in risk language, supplier exposure, M&A patterns, and topic-specific management tone.
 
 ---
 
@@ -20,19 +21,17 @@ language, supplier exposure, M&A patterns, and topic-specific management tone.
 - Supply-chain graph construction for second-order exposure analysis
 - Parquet, DuckDB, API, and webhook outputs for downstream workflows
 
-Every quant fund scrapes SEC filings. Sentiment analysis on 10-K/10-Q text is a solved, commoditized problem with zero alpha left. **sigint** does something different: it extracts *causal, structural relationships* buried in filings -- supply chain dependencies, risk factor escalations, M&A language patterns, and topic-level management tone shifts -- and compiles them into timestamped, backtestable signals.
+Every quant fund scrapes SEC filings. Sentiment analysis on 10-K/10-Q text is a solved, commoditized problem with zero alpha left. **alphasig** does something different: it extracts *causal, structural relationships* buried in filings -- supply chain dependencies, risk factor escalations, M&A language patterns, and topic-level management tone shifts -- and compiles them into timestamped, backtestable signals.
 
 ## Why This Exists
 
 The difference between "sentiment is positive" (useless) and "Company X just added 'supply chain concentration risk' to their 10-K for the first time, and their top supplier is Company Y which reports next week" (actionable).
 
-Research shows ([Lazy Prices, Cohen et al. 2020](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1658471)) that changes in 10-K language are among the strongest predictors of future returns. sigint operationalizes this insight.
+Research shows ([Lazy Prices, Cohen et al. 2020](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1658471)) that changes in 10-K language are among the strongest predictors of future returns. alphasig operationalizes this insight.
 
 ## Showcase
 
-![sigint supply-chain graph](assets/supply-chain-graph.png)
-
-*Supply-chain dependency graph rendered from a small local signal set using the built-in graph utilities.*
+The built-in supply-chain graph utilities render dependencies as a directed network where **nodes represent companies** and **edges represent disclosed supplier/customer relationships**. Edge weights encode exposure magnitude extracted from filings (e.g., "40% of revenue from top supplier"). This enables second-order risk propagation: when TSMC faces a disruption, immediately identify all downstream companies with concentrated exposure.
 
 ## Architecture
 
@@ -61,14 +60,23 @@ graph TD
 | **Supply Chain** | Extracts supplier/customer/partner relationships into a knowledge graph | When TSMC has a disruption, know exactly which companies are exposed |
 | **Risk Differ** | Diffs Item 1A between consecutive filings; classifies NEW, REMOVED, ESCALATED, DE_ESCALATED | Legal language changes are the strongest predictive signals (Lazy Prices) |
 | **M&A Detector** | Identifies strategic-alternatives language, advisor engagements, cash positioning shifts | Certain filing patterns strongly precede M&A announcements |
-| **Tone Analyzer** | Tracks topic-specific management tone across filings on a 6-point scale | Not "positive/negative" but "confident -> hedging" on specific topics |
+| **Tone Analyzer** | Tracks topic-specific management tone across filings on a 6-point scale | Not "positive/negative" but "confident → hedging" on specific topics |
+
+## Signal Types
+
+| Type | Example | Typical Lead Time |
+|---|---|---|
+| `supply_chain` | "Apple adds TSMC concentration risk" | 5–10 trading days |
+| `risk_change` | "ESCALATED: Regulatory scrutiny in Item 1A" | 1–3 trading days |
+| `m_and_a` | "Strategic alternatives language in MD&A" | 10–30 trading days |
+| `tone_shift` | "Management tone on margins shifted hedging → confident" | Next earnings |
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-pip install sigint
+pip install alphasig
 ```
 
 ### Basic Usage
@@ -106,21 +114,19 @@ async def main():
 asyncio.run(main())
 ```
 
-The public API is designed around `Pipeline` and `SignalCollection`, so the
-same extraction run can feed notebooks, alerting, or backtests without an
-adapter layer.
+The public API is designed around `Pipeline` and `SignalCollection`, so the same extraction run can feed notebooks, alerting, or backtests without an adapter layer.
 
 ### CLI
 
 ```bash
 # Extract signals
-sigint extract --tickers AAPL MSFT --lookback 3 --output signals.parquet
+alphasig extract --tickers AAPL MSFT --lookback 3 --output signals.parquet
 
 # Query stored signals
-sigint query --ticker AAPL --type risk_change --min-strength 0.7
+alphasig query --ticker AAPL --type risk_change --min-strength 0.7
 
 # Launch REST API
-sigint serve --port 8080
+alphasig serve --port 8080
 ```
 
 ### REST API
@@ -132,7 +138,7 @@ curl http://localhost:8080/signals/summary
 
 ## Configuration
 
-sigint reads the Anthropic API key from the `ANTHROPIC_API_KEY` environment variable. EDGAR requires a User-Agent with a contact email (SEC policy).
+alphasig reads the Anthropic API key from the `ANTHROPIC_API_KEY` environment variable. EDGAR requires a User-Agent with a contact email (SEC policy).
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -160,7 +166,7 @@ Signal(
 ## Project Structure
 
 ```
-sigint/
+alphasig/
 ├── src/sigint/
 │   ├── __init__.py          # Public API
 │   ├── edgar.py             # Async EDGAR client with rate limiting
@@ -203,8 +209,8 @@ For EDGAR extraction and portfolio-scale signal analysis, see `examples/`.
 ## Development
 
 ```bash
-git clone https://github.com/sushaan-k/sigint.git
-cd sigint
+git clone https://github.com/sushaan-k/alphasig.git
+cd alphasig
 pip install -e ".[dev]"
 pytest -v
 ruff check src/ tests/

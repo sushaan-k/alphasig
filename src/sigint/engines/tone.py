@@ -60,6 +60,16 @@ _TONE_RANK: dict[ToneLabel, int] = {
     ToneLabel.PESSIMISTIC_WARNING: 0,
 }
 
+# Direction and strength for a tone in isolation (no prior filing to compare)
+_TONE_BASELINE: dict[ToneLabel, tuple[SignalDirection, float]] = {
+    ToneLabel.CONFIDENT_EXPANDING: (SignalDirection.BULLISH, 0.70),
+    ToneLabel.OPTIMISTIC_CAUTIOUS: (SignalDirection.BULLISH, 0.40),
+    ToneLabel.NEUTRAL_FACTUAL: (SignalDirection.NEUTRAL, 0.0),
+    ToneLabel.HEDGING_CAUTIOUS: (SignalDirection.BEARISH, 0.30),
+    ToneLabel.DEFENSIVE_JUSTIFYING: (SignalDirection.BEARISH, 0.55),
+    ToneLabel.PESSIMISTIC_WARNING: (SignalDirection.BEARISH, 0.80),
+}
+
 
 def classify_tone_shift(
     current: ToneLabel, previous: ToneLabel
@@ -131,8 +141,14 @@ class ToneEngine(BaseEngine):
                     previous_mda,
                 )
 
-        # Shift detection requires a previous filing for comparison.
-        return []
+        # No previous filing available — emit baseline tone signals so the
+        # first filing in a series is not silently dropped.
+        logger.info(
+            "tone_baseline_only",
+            ticker=current_mda.ticker,
+            filing=current_mda.filed_date.isoformat(),
+        )
+        return _compute_baselines(current_tones, current_mda)
 
 
 def _find_mda(
@@ -159,6 +175,65 @@ async def _extract_tones(
     if not isinstance(raw_items, list):
         raw_items = [raw_items]
     return raw_items
+
+
+def _compute_baselines(
+    current_tones: list[dict[str, Any]],
+    current_section: FilingSection,
+) -> list[Signal]:
+    """Emit tone signals for a first filing with no prior comparison.
+
+    Uses the absolute tone position (rather than a shift) to assign
+    direction and strength, so the first filing in a series is not lost.
+    """
+    signals: list[Signal] = []
+    for item in current_tones:
+        topic = str(item.get("topic", "")).lower().strip()
+        if not topic:
+            continue
+        try:
+            current_tone = ToneLabel(item.get("tone", "neutral_factual"))
+        except ValueError:
+            continue
+
+        direction, strength = _TONE_BASELINE[current_tone]
+        if direction == SignalDirection.NEUTRAL:
+            continue
+
+        confidence = float(item.get("confidence", 0.5))
+        signals.append(
+            Signal(
+                timestamp=datetime.combine(
+                    current_section.filed_date,
+                    datetime.min.time(),
+                    tzinfo=UTC,
+                ),
+                ticker=current_section.ticker,
+                signal_type=SignalType.TONE_SHIFT,
+                direction=direction,
+                strength=strength,
+                confidence=confidence,
+                context=(
+                    f"Baseline tone on '{topic}': {current_tone.value} "
+                    f"(no prior filing available)"
+                ),
+                source_filing="",
+                related_tickers=[],
+                metadata={
+                    "topic": topic,
+                    "current_tone": current_tone.value,
+                    "previous_tone": None,
+                    "key_phrases": item.get("key_phrases", []),
+                    "current_filing": (
+                        f"{current_section.filing_type.value} "
+                        f"{current_section.filed_date.isoformat()}"
+                    ),
+                    "previous_filing": None,
+                    "is_baseline": True,
+                },
+            )
+        )
+    return signals
 
 
 def _compute_shifts(

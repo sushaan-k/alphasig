@@ -49,6 +49,8 @@ For each change, return a JSON object with:
 - language_shift: For ESCALATED/DE_ESCALATED, quote the old and new
   phrasing.  For NEW/REMOVED, leave empty.
 - severity_estimate: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+- confidence: 0.0 to 1.0, your confidence that this is a genuine
+  material change and not a boilerplate reword.
 - related_tickers: list of tickers of other companies mentioned in
   the risk factor (if any).  Empty list if none.
 
@@ -209,6 +211,7 @@ def _parse_risk_change(
         ),
         language_shift=str(item.get("language_shift", "")),
         severity_estimate=Severity(item.get("severity_estimate", "MEDIUM")),
+        confidence=float(item.get("confidence", 0.8)),
         related_tickers=item.get("related_tickers", []),
     )
 
@@ -220,7 +223,10 @@ def _changes_to_signals(
     signals: list[Signal] = []
     for change in changes:
         direction = _DIRECTION_MAP.get(change.change_type, SignalDirection.NEUTRAL)
-        strength = _SEVERITY_STRENGTH.get(change.severity_estimate, 0.5)
+        base_strength = _SEVERITY_STRENGTH.get(change.severity_estimate, 0.5)
+        # Weight strength by confidence so a LOW-confidence CRITICAL change
+        # does not outrank a HIGH-confidence MEDIUM change.
+        strength = base_strength * change.confidence
         signals.append(
             Signal(
                 timestamp=datetime.combine(
@@ -232,7 +238,7 @@ def _changes_to_signals(
                 signal_type=SignalType.RISK_CHANGE,
                 direction=direction,
                 strength=strength,
-                confidence=0.8,
+                confidence=change.confidence,
                 context=(
                     f"{change.change_type.value}: {change.risk}"
                     + (f" ({change.language_shift})" if change.language_shift else "")
@@ -242,6 +248,7 @@ def _changes_to_signals(
                 metadata={
                     "change_type": change.change_type.value,
                     "severity": change.severity_estimate.value,
+                    "confidence": change.confidence,
                     "language_shift": change.language_shift,
                     "current_filing": change.current_filing,
                     "previous_filing": change.previous_filing,

@@ -34,6 +34,7 @@ from sigint.exceptions import (
     EdgarError,
     EdgarNotFoundError,
     EdgarRateLimitError,
+    EdgarTransientError,
 )
 from sigint.models import Filing, FilingType
 
@@ -128,21 +129,28 @@ class EdgarClient:
         return self._client
 
     @retry(
-        retry=retry_if_exception_type(EdgarRateLimitError),
+        retry=retry_if_exception_type((EdgarRateLimitError, EdgarTransientError)),
         wait=wait_exponential(multiplier=1, min=2, max=30),
         stop=stop_after_attempt(5),
         reraise=True,
     )
     async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Issue a rate-limited GET, retrying on 429."""
+        """Issue a rate-limited GET, retrying on 429, timeouts, and 5xx errors."""
         client = self._assert_open()
         await self._limiter.acquire()
-        resp = await client.get(url, **kwargs)
+        try:
+            resp = await client.get(url, **kwargs)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            logger.warning("edgar_network_error", url=url, error=str(exc))
+            raise EdgarTransientError(f"Network error fetching {url}: {exc}") from exc
         if resp.status_code == 429:
             logger.warning("edgar_rate_limited", url=url)
             raise EdgarRateLimitError("EDGAR returned 429")
         if resp.status_code == 404:
             raise EdgarNotFoundError(f"Not found: {url}")
+        if resp.status_code >= 500:
+            logger.warning("edgar_server_error", url=url, status=resp.status_code)
+            raise EdgarTransientError(f"EDGAR returned {resp.status_code} for {url}")
         resp.raise_for_status()
         return resp
 
