@@ -161,23 +161,47 @@ class SignalCollection:
         self,
         *,
         ticker: str | None = None,
+        tickers: Sequence[str] | None = None,
         signal_type: SignalType | str | None = None,
+        signal_types: Sequence[SignalType | str] | None = None,
         direction: SignalDirection | str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         min_strength: float | None = None,
         min_confidence: float | None = None,
     ) -> SignalCollection:
-        """Apply multiple common filters in a single pass."""
+        """Apply common filters in one pass.
+
+        Plural filters match any value within that dimension, while different
+        dimensions are combined with AND semantics.
+        """
+        if ticker is not None and tickers is not None:
+            raise ValueError("Cannot specify both ticker and tickers")
+        if signal_type is not None and signal_types is not None:
+            raise ValueError("Cannot specify both signal_type and signal_types")
+        if isinstance(tickers, str):
+            raise TypeError("tickers must be a sequence of ticker strings")
+        if isinstance(signal_types, str):
+            raise TypeError("signal_types must be a sequence of signal types")
+
         results = self._signals
         if ticker is not None:
             ticker = ticker.upper()
             results = [signal for signal in results if signal.ticker == ticker]
+        if tickers is not None:
+            ticker_set = {item.upper() for item in tickers}
+            results = [signal for signal in results if signal.ticker in ticker_set]
         if signal_type is not None:
             sig_type = (
                 SignalType(signal_type) if isinstance(signal_type, str) else signal_type
             )
             results = [signal for signal in results if signal.signal_type == sig_type]
+        if signal_types is not None:
+            sig_types = {
+                SignalType(item) if isinstance(item, str) else item
+                for item in signal_types
+            }
+            results = [signal for signal in results if signal.signal_type in sig_types]
         if direction is not None:
             sig_direction = (
                 SignalDirection(direction) if isinstance(direction, str) else direction
