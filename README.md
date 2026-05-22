@@ -116,6 +116,20 @@ asyncio.run(main())
 
 The public API is designed around `Pipeline` and `SignalCollection`, so the same extraction run can feed notebooks, alerting, or backtests without an adapter layer.
 
+For offline portfolio review, `rank_signals` converts any stored or exported
+signals into a deterministic watchlist:
+
+```python
+from sigint import SignalStore, rank_signals
+
+store = SignalStore("sigint.duckdb")
+signals = store.query(min_confidence=0.8, limit=100_000)
+store.close()
+
+report = rank_signals(signals, limit=20)
+print(report.to_markdown())
+```
+
 ### CLI
 
 ```bash
@@ -125,9 +139,18 @@ alphasig extract --tickers AAPL MSFT --lookback 3 --output signals.parquet
 # Query stored signals
 alphasig query --ticker AAPL --type risk_change --min-strength 0.7
 
+# Rank stored signals into a portfolio watchlist
+alphasig rank --db sigint.duckdb --min-confidence 0.8 --format markdown \
+  --output reports/ranking.md
+
 # Launch REST API
 alphasig serve --port 8080
 ```
+
+`rank` is fully offline: it reads the local DuckDB signal store, scores each
+ticker by confidence-weighted directional strength, includes signal decay when
+`--as-of` is supplied, and can emit an analyst-friendly table, JSON, or
+Markdown report.
 
 ### REST API
 

@@ -64,6 +64,37 @@ for signal in signals:
     composite = signal.strength * w
 ```
 
+## Ranking Signals Offline
+
+For portfolio review or pre-backtest screening, score the local signal store
+without re-running EDGAR or LLM extraction:
+
+```bash
+sigint rank --db sigint.duckdb --min-confidence 0.8 --limit 25
+sigint rank --db sigint.duckdb --format json --output ranking.json
+sigint rank --db sigint.duckdb --as-of 2025-01-15T00:00:00Z
+```
+
+The ranking uses confidence-weighted directional strength:
+
+- bullish signals contribute positive exposure
+- bearish signals contribute negative exposure
+- neutral signals contribute gross exposure but not net direction
+- `--as-of` evaluates each signal's configured decay before scoring
+
+The same logic is available from Python:
+
+```python
+from sigint import SignalStore, rank_signals
+
+store = SignalStore("sigint.duckdb")
+signals = store.query(min_confidence=0.8, limit=100_000)
+store.close()
+
+report = rank_signals(signals, limit=25)
+print(report.to_json())
+```
+
 ## DuckDB Analytics
 
 For more complex queries, use the DuckDB store directly:

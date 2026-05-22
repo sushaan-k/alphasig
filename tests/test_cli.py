@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from sigint.cli import _print_signal_table, main
+from sigint.cli import _parse_cli_datetime, _print_signal_table, main
 from sigint.models import Signal, SignalDirection, SignalType
 from sigint.signals import SignalCollection
 
@@ -261,6 +261,87 @@ class TestQueryCommand:
             min_strength=0.5,
             limit=10,
         )
+
+
+class TestRankCommand:
+    """Tests for the 'rank' CLI command."""
+
+    def test_rank_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["rank", "--help"])
+        assert result.exit_code == 0
+        assert "--min-confidence" in result.output
+        assert "--as-of" in result.output
+
+    @patch("sigint.storage.SignalStore")
+    def test_rank_outputs_json(
+        self,
+        mock_store_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.query.return_value = mock_signals
+
+        result = runner.invoke(
+            main,
+            [
+                "rank",
+                "--db",
+                ":memory:",
+                "--format",
+                "json",
+                "--min-confidence",
+                "0.8",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert '"ticker_count"' in result.output
+        assert '"AAPL"' in result.output
+        mock_store.query.assert_called_once_with(
+            min_confidence=0.8,
+            limit=100_000,
+        )
+        mock_store.close.assert_called_once()
+
+    @patch("sigint.storage.SignalStore")
+    def test_rank_writes_markdown_report(
+        self,
+        mock_store_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+        tmp_path,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.query.return_value = mock_signals
+        report_path = tmp_path / "reports" / "ranking.md"
+
+        result = runner.invoke(
+            main,
+            [
+                "rank",
+                "--db",
+                ":memory:",
+                "--format",
+                "markdown",
+                "--output",
+                str(report_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Wrote ranking report" in result.output
+        assert "| Rank | Ticker | Direction |" in report_path.read_text()
+
+    def test_parse_cli_datetime_accepts_z_suffix(self) -> None:
+        parsed = _parse_cli_datetime("2024-01-01T12:30:00Z")
+        assert parsed == datetime(2024, 1, 1, 12, 30, tzinfo=UTC)
+
+    def test_parse_cli_datetime_rejects_invalid_value(self) -> None:
+        with pytest.raises(Exception, match="Invalid --as-of"):
+            _parse_cli_datetime("not-a-date")
 
 
 class TestServeCommand:

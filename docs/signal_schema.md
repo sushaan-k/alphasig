@@ -38,3 +38,21 @@ Signals can be exported to:
 - **CSV** -- `signals.to_csv("path.csv")`
 - **REST API** -- `signals.to_api(port=8080)`
 - **DuckDB** -- Automatic via `SignalStore`
+
+## Ranking Reports
+
+Stored signals can also be transformed into ticker-level ranking reports with
+`sigint rank` or `rank_signals(signals)`. Each ticker score includes:
+
+| Field | Description |
+|---|---|
+| `score` | Average confidence-weighted directional strength, negative for bearish exposure |
+| `gross_score` | Average confidence-weighted absolute exposure |
+| `signal_count` | Number of signals contributing to the ticker |
+| `avg_strength` | Average effective strength, including decay when an `as_of` timestamp is used |
+| `avg_confidence` | Average extraction confidence |
+| `top_contexts` | Highest-weight signal explanations for analyst review |
+| `related_tickers` | Count of related tickers mentioned by contributing signals |
+
+The report renders as JSON or Markdown for CI artifacts, research notebooks, or
+portfolio review notes.

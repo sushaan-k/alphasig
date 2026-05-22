@@ -39,6 +39,7 @@ from sigint.models import (
     ToneTrajectory,
 )
 from sigint.pipeline import Pipeline
+from sigint.reporting import SignalRankingReport, TickerScore, rank_signals
 from sigint.sectors import Sector, classify_sector
 from sigint.signals import CorrelationMatrix, SignalCollection
 from sigint.storage import SignalStore
@@ -60,12 +61,15 @@ __all__ = [
     "Signal",
     "SignalCollection",
     "SignalDirection",
+    "SignalRankingReport",
     "SignalStore",
     "SignalType",
     "SupplyChainEdge",
     "SupplyChainGraph",
+    "TickerScore",
     "ToneLabel",
     "TonePoint",
     "ToneTrajectory",
     "classify_sector",
+    "rank_signals",
 ]
