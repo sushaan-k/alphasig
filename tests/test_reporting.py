@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from sigint.models import Signal, SignalDirection, SignalType
-from sigint.reporting import rank_signals
+from sigint.reporting import rank_signals, summarize_sector_exposure
 
 
 def _signal(
@@ -140,3 +140,75 @@ def test_report_serializes_to_json_and_markdown() -> None:
     assert data["ticker_count"] == 1
     assert data["tickers"][0]["ticker"] == "AAPL"
     assert "| 1 | AAPL | bullish |" in markdown
+
+
+def test_summarize_sector_exposure_groups_and_orders_by_sector() -> None:
+    report = summarize_sector_exposure(
+        [
+            _signal("AAPL", SignalDirection.BEARISH, 0.9, 0.9),
+            _signal("MSFT", SignalDirection.BEARISH, 0.6, 0.8),
+            _signal("JPM", SignalDirection.BULLISH, 0.7, 0.8),
+        ]
+    )
+
+    assert [sector.sector for sector in report.sectors] == [
+        "technology",
+        "financials",
+    ]
+    technology = report.sectors[0]
+    assert technology.direction == "bearish"
+    assert technology.score == -0.645
+    assert technology.gross_score == 0.645
+    assert technology.signal_count == 2
+    assert technology.ticker_count == 2
+    assert technology.top_tickers == ["AAPL", "MSFT"]
+    assert report.total_signals == 3
+
+
+def test_summarize_sector_exposure_can_exclude_unknown_tickers() -> None:
+    report = summarize_sector_exposure(
+        [
+            _signal("AAPL", SignalDirection.BULLISH, 0.8, 0.9),
+            _signal("ZZZZZ", SignalDirection.BEARISH, 1.0, 1.0),
+        ],
+        include_unknown=False,
+    )
+
+    assert [sector.sector for sector in report.sectors] == ["technology"]
+    assert report.total_signals == 2
+
+
+def test_summarize_sector_exposure_applies_decay() -> None:
+    timestamp = datetime(2024, 1, 1, tzinfo=UTC)
+    as_of = timestamp + timedelta(days=10)
+
+    report = summarize_sector_exposure(
+        [
+            _signal(
+                "AAPL",
+                SignalDirection.BULLISH,
+                1.0,
+                1.0,
+                timestamp=timestamp,
+                decay_rate=0.1,
+            )
+        ],
+        as_of=as_of,
+    )
+
+    assert 0.36 < report.sectors[0].score < 0.37
+    assert report.sectors[0].avg_strength == report.sectors[0].score
+
+
+def test_sector_report_serializes_to_json_and_markdown() -> None:
+    report = summarize_sector_exposure(
+        [_signal("AAPL", SignalDirection.BULLISH, 0.7, 0.8)],
+        limit=1,
+    )
+
+    data = report.to_dict()
+    markdown = report.to_markdown()
+
+    assert data["sector_count"] == 1
+    assert data["sectors"][0]["sector"] == "technology"
+    assert "| 1 | technology | bullish |" in markdown
