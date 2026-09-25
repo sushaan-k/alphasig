@@ -190,7 +190,7 @@ identical text returns immediately.
 | evolved, 40 paragraphs | 120k | 2.47 | 0.28 | 0.980 |
 | evolved, 80 paragraphs | 235k | 14.1 | 1.14 | 0.988 |
 | identical, 40 paragraphs | 120k | 0.216 | **0.0011** | 1.0 |
-| engine, 7 consecutive 10-K pairs (~68k chars each), zero-latency LLM | | 19.2 s, 7 LLM calls | 2.9 s, 2 LLM calls | |
+| engine, 7 consecutive 10-K pairs (~68k chars each), zero-latency LLM | | 19.2 s, 7 LLM calls | 2.8 s, 7 LLM calls | |
 
 On a real section (Apple's 10-K Item 1A, 69k characters) the check takes
 about 0.15 s, and 1 ms when the text is unchanged.
@@ -199,14 +199,16 @@ about 0.15 s, and 1 ms when the text is unchanged.
 
 | corpus | section | 0.1.x detected | 0.1.x precision / recall | 0.2.0 detected | 0.2.0 precision / recall |
 |---|---|---|---|---|---|
-| real | Item 1A risk factors | 4 / 5 | 0.748 / 0.800 | 3 / 5 | 1.000 / 0.600 |
+| real | Item 1A risk factors | 4 / 5 | 0.748 / 0.800 | 5 / 5 | 1.000 / 0.999 |
 | real | Item 7 / Part I Item 2 MD&A | 5 / 5 | 0.798 / 1.000 | 5 / 5 | 1.000 / 1.000 |
 | synthetic | risk factors | 43 / 50 | 0.917 / 0.860 | 50 / 50 | 1.000 / 1.000 |
 | synthetic | MD&A | 50 / 50 | 0.773 / 0.800 | 50 / 50 | 1.000 / 1.000 |
 
 Every section 0.2.0 finds is exact to within one character (the `-1`
 flattening artefact above), except NVIDIA's MD&A, which starts 18 characters
-late. The `b928903` results are identical, as the equivalence test requires.
+late. The 0.2.0 columns and the engine row above are from
+`results/gate-and-heading-fix.md`, measured after the two fixes described
+under Findings.
 
 ### Supply-chain graph
 
@@ -214,23 +216,27 @@ This code did not change. 100k input edges (63.5k kept after confidence
 merging, 10.3k nodes) build in 0.52 s; `exposure()` on the biggest hub takes
 82 ms and `most_connected(10)` 33 ms.
 
-## Findings (not changed here)
+## Findings
 
-These are behaviours of the reviewed 0.2.0 code that the benchmarks expose.
-They would change extraction output, so they are reported rather than fixed.
+The benchmarks exposed two extraction bugs, both now fixed:
 
-1. **Oracle's Item 1A is not found** (10-K and 10-Q), where 0.1.x found the
-   10-K's. Oracle styles the first letter of each heading word separately, so
-   the heading text reads `Item 1A. R isk Factors` and does not match the
-   `risk\s+factors` pattern. MD&A and Business are found in the same
-   filings.
-2. **The risk-diff gate can skip material changes.** The LLM is only called
-   when word similarity is at most 0.98. Adding a new ~570-character risk
-   paragraph to Apple's 69k-character Item 1A gives a similarity of 0.995, so
-   that change would never reach the model. In the synthetic engine bench, 5
-   of 7 consecutive-year pairs (each with an added and a removed paragraph)
-   are skipped this way.
-3. The similarity check is still super-linear: 1.1 s at 235k characters and
+1. **Oracle's Item 1A was not found** (10-K and 10-Q). Oracle styles the
+   first letter(s) of each heading word separately, so the heading text read
+   `Item 1A. R isk Factors` / `Ri sk Factors` and did not match. Heading
+   matching now rejoins such fragments; all 5 real filings' Item 1A are found
+   (previously 3 of 5).
+2. **The risk-diff gate skipped material changes.** The LLM was only called
+   when word similarity was at most 0.98, a ratio that shrinks with section
+   length: a new ~570-character risk paragraph in Apple's 69k-character
+   Item 1A scored 0.995 and never reached the model, and 5 of 7 synthetic
+   consecutive-year pairs were skipped. The gate now counts changed words,
+   ignoring purely numeric tokens (years, amounts): the LLM is skipped only
+   when fewer than 5 words of wording changed, so date and figure updates
+   still cost nothing and all 7 synthetic pairs are analysed.
+
+Still open:
+
+1. The similarity check is still super-linear: 1.1 s at 235k characters and
    about 11 s at 600k. It no longer blocks the event loop, but it holds the
    GIL while it runs.
 

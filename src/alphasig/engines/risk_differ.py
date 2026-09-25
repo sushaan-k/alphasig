@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -69,6 +70,10 @@ _DIRECTION_MAP: dict[RiskChangeType, SignalDirection] = {
 # versions must be compared in full: truncating a lightly edited section
 # pushes its tail out of one side and fabricates NEW / REMOVED changes.
 _MAX_SECTION_CHARS = 200_000
+# Fewer changed (non-numeric) words than this means no wording changed
+# beyond typo-level edits, so the LLM call is skipped.
+_MIN_CHANGED_WORDS = 5
+_NUMERIC = re.compile(r"^[\W\d]*\d[\W\d]*$")
 
 _SEVERITY_STRENGTH: dict[Severity, float] = {
     Severity.LOW: 0.25,
@@ -90,10 +95,29 @@ def compute_text_similarity(text_a: str, text_b: str) -> float:
     Identical word sequences short-circuit to 1.0 (what ``ratio()`` returns
     for them) without the matcher's superlinear walk.
     """
+    return diff_stats(text_a, text_b)[0]
+
+
+def diff_stats(text_a: str, text_b: str) -> tuple[float, int]:
+    """Return ``(similarity, changed_words)`` for two text blocks.
+
+    ``changed_words`` counts words inserted, deleted or replaced, ignoring
+    purely numeric tokens (years, amounts, percentages) so routine date and
+    figure updates do not count as wording changes.  Unlike the ratio, it
+    does not shrink as the section grows: one new risk paragraph in a long
+    10-K is a handful of percent of the text but dozens of changed words.
+    """
     words_a, words_b = text_a.split(), text_b.split()
     if words_a == words_b:
-        return 1.0
-    return difflib.SequenceMatcher(None, words_a, words_b, autojunk=False).ratio()
+        return 1.0, 0
+    matcher = difflib.SequenceMatcher(None, words_a, words_b, autojunk=False)
+    changed = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            changed += sum(
+                1 for w in (*words_a[i1:i2], *words_b[j1:j2]) if not _NUMERIC.match(w)
+            )
+    return matcher.ratio(), changed
 
 
 class RiskDifferEngine(BaseEngine):
@@ -144,18 +168,19 @@ class RiskDifferEngine(BaseEngine):
             )
             return []
 
-        # Quick similarity check -- skip LLM call if nearly identical.
+        # Quick check -- skip the LLM call when no wording changed.
         # difflib is pure Python and takes ~0.1-1 s on full 10-K risk
         # sections; run it in a worker thread so the event loop keeps
         # serving other filings' EDGAR and LLM I/O meanwhile.
-        similarity = await asyncio.to_thread(
-            compute_text_similarity, current_rf.text, previous_rf.text
+        similarity, changed_words = await asyncio.to_thread(
+            diff_stats, current_rf.text, previous_rf.text
         )
-        if similarity > 0.98:
+        if changed_words < _MIN_CHANGED_WORDS:
             logger.info(
                 "risk_differ_no_material_change",
                 ticker=current_rf.ticker,
                 similarity=round(similarity, 4),
+                changed_words=changed_words,
             )
             return []
 

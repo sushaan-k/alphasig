@@ -95,6 +95,10 @@ _SECTION_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
 # Item 1B/1C after Risk Factors, or 10-Q Part II Item 2).
 _ITEM_HEADER = re.compile(r"item\s+\d{1,2}[a-c]?(?:\.\d{2})?\b", re.IGNORECASE)
 _PART_PREFIX = re.compile(r"part\s+[iv]+\W+", re.IGNORECASE)
+# Headings that style a word's first letter(s) separately
+# ("<span>R</span>isk Factors") flatten to "R isk Factors" or
+# "Ri sk Factors"; rejoin the fragment before matching.
+_SPLIT_INITIAL = re.compile(r"\b([A-Z][a-z]?) (?=[a-z]{2,})")
 _HEADER_TAGS = frozenset(
     {"b", "strong", "p", "div", "span", "font", "h1", "h2", "h3", "h4"}
 )
@@ -204,6 +208,7 @@ def _find_section_boundaries(
         prefix = _PART_PREFIX.match(text)
         if prefix:
             text = text[prefix.end() :]
+        text = _SPLIT_INITIAL.sub(r"\1", text)
         match = next(
             ((key, name) for key, name, pat in _SECTION_PATTERNS if pat.match(text)),
             None,

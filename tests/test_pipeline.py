@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -847,6 +848,23 @@ _UA = "Test test@example.com"
 # Supply-chain calls per mocked filing: one per section (Items 1, 1A and 7).
 _SECTIONS = 3
 _CIK_URL = "https://data.sec.gov/submissions/CIK0000320193.json"
+_VOCAB = [
+    "tariffs",
+    "litigation",
+    "cybersecurity",
+    "inflation",
+    "currency",
+    "supplier",
+    "outage",
+    "regulation",
+    "antitrust",
+    "recall",
+    "labor",
+    "shortage",
+    "sanctions",
+    "privacy",
+    "climate",
+]
 
 
 def _mock_edgar(years: list[int]) -> dict[str, int]:
@@ -875,6 +893,8 @@ def _mock_edgar(years: list[int]) -> dict[str, int]:
         year = str(request.url).rsplit("-", 1)[1][:4]
         fetched[year] = fetched.get(year, 0) + 1
         risks = " ".join(f"Risk {year}-{i} may affect results." for i in range(30))
+        # A wording change each year, so the risk differ has something to diff.
+        risks += " New risk: " + " ".join(random.Random(year).sample(_VOCAB, 8))
         body = (
             "<html><body>"
             "<p><b>Item 1. Business</b></p>"

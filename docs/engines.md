@@ -24,7 +24,7 @@ Inspired by the "Lazy Prices" paper (Cohen, Malloy, Nguyen 2020) which demonstra
 
 **Sections used:** Risk Factors (Item 1A; Part II Item 1A in 10-Qs)
 
-**Requires previous filing:** Yes -- the prior filing of the same form type. Pairs whose Risk Factors are more than 98% identical (word-level) are skipped without an LLM call. Up to 200k characters of each version are compared.
+**Requires previous filing:** Yes -- the prior filing of the same form type. Pairs whose Risk Factors differ by fewer than 5 words, ignoring purely numeric tokens such as years and amounts, are skipped without an LLM call. Up to 200k characters of each version are compared.
 
 **Signal direction:** NEW/ESCALATED = bearish, REMOVED/DE_ESCALATED = bullish.
 

@@ -65,6 +65,11 @@ All notable changes to this project are documented here. The format follows
 
 - Section parser: a table of contents hid Risk Factors / MD&A, Items 1B/1C
   leaked into Risk Factors, and running page headers split sections.
+- Section parser: headings that style a word's first letter(s) separately
+  (`R isk Factors`, as in Oracle's filings) were not recognised.
+- Risk differ: the "no material change" gate used a similarity ratio above
+  0.98, which skipped new risk paragraphs in long sections. It now skips the
+  LLM only when fewer than 5 non-numeric words changed.
 - EDGAR client: bursts above 10 requests/second, ignored `Retry-After`,
   unretried transport errors, duplicate ticker-map downloads, truncated cache
   files after interrupted writes, and filings beyond the first submissions

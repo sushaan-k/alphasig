@@ -26,9 +26,11 @@ from benchmarks.fixtures import CACHE_DIR, REAL_FIXTURES, VARIANTS, synth_filing
 pytestmark = pytest.mark.filterwarnings("ignore::bs4.XMLParsedAsHTMLWarning")
 
 # --- oracle: the BeautifulSoup implementation, verbatim -------------------
+# (plus the split-initial heading normalisation both implementations share)
 
 _ITEM_HEADER = re.compile(r"item\s+\d{1,2}[a-c]?(?:\.\d{2})?\b", re.IGNORECASE)
 _PART_PREFIX = re.compile(r"part\s+[iv]+\W+", re.IGNORECASE)
+_SPLIT_INITIAL = re.compile(r"\b([A-Z][a-z]?) (?=[a-z]{2,})")
 _HEADER_TAGS = ["b", "strong", "p", "div", "span", "font", "h1", "h2", "h3", "h4"]
 _MAX_HEADER_LEN = 200
 
@@ -61,6 +63,7 @@ def _find_section_boundaries(
         prefix = _PART_PREFIX.match(text)
         if prefix:
             text = text[prefix.end() :]
+        text = _SPLIT_INITIAL.sub(r"\1", text)
         match = next(
             ((key, name) for key, name, pat in _SECTION_PATTERNS if pat.match(text)),
             None,

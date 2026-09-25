@@ -1,0 +1,312 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-09-25T20:38:59+00:00",
+    "git_commit": "8cbc6038aa6cc0ba3e72933dc5c7d076ac6623cf",
+    "code_under_test": "8cbc6038aa6cc0ba3e72933dc5c7d076ac6623cf",
+    "git_dirty": true,
+    "alphasig_import_path": "src/alphasig",
+    "python": "3.11.15",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.44-fc-v42-x86_64-with-glibc2.39",
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "cpu_count": 4,
+    "packages": {
+      "alphasig": "0.2.0",
+      "beautifulsoup4": "4.15.0",
+      "lxml": "6.1.3",
+      "duckdb": "1.5.5",
+      "pyarrow": "25.0.1",
+      "networkx": "3.6.1",
+      "httpx": "0.28.1",
+      "pydantic": "2.13.5",
+      "anthropic": "1.8.0",
+      "respx": "0.23.1",
+      "pandas": "3.0.6"
+    },
+    "seed": 1234
+  },
+  "quick": false,
+  "benches": {
+    "boundaries": {
+      "real_fixtures_available": 5,
+      "real_per_document": {
+        "Apple.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 68759,
+            "pred_chars": 68758
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 0.9999,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 15346,
+            "pred_chars": 15345
+          }
+        },
+        "Apple.10-Q": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 0.9989,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 937,
+            "pred_chars": 936
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 0.9999,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 17447,
+            "pred_chars": 17446
+          }
+        },
+        "Nvidia.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 87676,
+            "pred_chars": 87675
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 0.9995,
+            "start_error_chars": 18,
+            "end_error_chars": -1,
+            "gold_chars": 38506,
+            "pred_chars": 38487
+          }
+        },
+        "Oracle.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 77183,
+            "pred_chars": 77182
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 72169,
+            "pred_chars": 72168
+          }
+        },
+        "Oracle.10-Q": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 0.9986,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 692,
+            "pred_chars": 691
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 1.0,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": -1,
+            "gold_chars": 60858,
+            "pred_chars": 60857
+          }
+        }
+      },
+      "real_summary": {
+        "risk_factors": {
+          "documents": 5,
+          "detected": 5,
+          "mean_precision": 1.0,
+          "mean_recall": 0.9995,
+          "near_exact_(p,r>=0.99)": 5
+        },
+        "md_and_a": {
+          "documents": 5,
+          "detected": 5,
+          "mean_precision": 1.0,
+          "mean_recall": 0.9999,
+          "near_exact_(p,r>=0.99)": 5
+        }
+      },
+      "synthetic_documents": 50,
+      "synthetic_summary": {
+        "risk_factors": {
+          "documents": 50,
+          "detected": 50,
+          "mean_precision": 1.0,
+          "mean_recall": 1.0,
+          "near_exact_(p,r>=0.99)": 50
+        },
+        "md_and_a": {
+          "documents": 50,
+          "detected": 50,
+          "mean_precision": 1.0,
+          "mean_recall": 0.9999,
+          "near_exact_(p,r>=0.99)": 50
+        }
+      },
+      "synthetic_by_variant": {
+        "workiva": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 10
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 0.9999,
+            "near_exact_(p,r>=0.99)": 10
+          }
+        },
+        "inline_toc": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 10
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 0.9999,
+            "near_exact_(p,r>=0.99)": 10
+          }
+        },
+        "caps_headings": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 10
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 0.9999,
+            "near_exact_(p,r>=0.99)": 10
+          }
+        },
+        "split_heading": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 10
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 0.9999,
+            "near_exact_(p,r>=0.99)": 10
+          }
+        },
+        "no_toc": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 10
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 1.0,
+            "mean_recall": 0.9999,
+            "near_exact_(p,r>=0.99)": 10
+          }
+        }
+      },
+      "bench_wall_s": 5.0
+    },
+    "risk_diff": {
+      "similarity_gate": [
+        {
+          "pair": "evolved",
+          "paragraphs": 10,
+          "chars_prev": 14851,
+          "chars_cur": 15113,
+          "similarity": 0.9236,
+          "median_s": 0.0193,
+          "chars_per_s": 1551663
+        },
+        {
+          "pair": "evolved",
+          "paragraphs": 40,
+          "chars_prev": 59821,
+          "chars_cur": 59979,
+          "similarity": 0.9799,
+          "median_s": 0.2828,
+          "chars_per_s": 423564
+        },
+        {
+          "pair": "evolved",
+          "paragraphs": 80,
+          "chars_prev": 117704,
+          "chars_cur": 117481,
+          "similarity": 0.9876,
+          "median_s": 1.0992,
+          "chars_per_s": 213958
+        },
+        {
+          "pair": "identical",
+          "paragraphs": 40,
+          "chars_prev": 59821,
+          "chars_cur": 59821,
+          "similarity": 1.0,
+          "median_s": 0.0012,
+          "chars_per_s": 102050965
+        }
+      ],
+      "engine": {
+        "filing_pairs": 7,
+        "avg_section_chars": 67639,
+        "llm_calls": 7,
+        "signals": 7,
+        "median_s": 2.7701,
+        "pairs_per_s": 2.527
+      },
+      "bench_wall_s": 19.36
+    }
+  },
+  "note": "after risk-diff changed-words gate and split-initial heading fix"
+}

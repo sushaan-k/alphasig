@@ -313,7 +313,7 @@ class TestRiskDifferEngine:
         self,
         mock_llm: LLMClient,
     ) -> None:
-        """When similarity > 0.98, skip the LLM call entirely."""
+        """When no wording changed, skip the LLM call entirely."""
         from datetime import date
 
         from alphasig.models import FilingType
@@ -344,6 +344,62 @@ class TestRiskDifferEngine:
         engine = RiskDifferEngine()
         signals = await engine.extract(current, mock_llm, previous_sections=previous)
         assert signals == []
+        mock_llm.extract_json.assert_not_called()  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _rf(text: str, filed: str) -> list[FilingSection]:
+        from datetime import date
+
+        from alphasig.models import FilingType
+
+        return [
+            FilingSection(
+                filing_accession=f"ACC-{filed}",
+                ticker="AAPL",
+                section_name="Risk Factors",
+                section_key="risk_factors",
+                text=text,
+                filing_type=FilingType.TEN_K,
+                filed_date=date.fromisoformat(filed),
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_new_paragraph_in_long_section_reaches_llm(
+        self, mock_llm: LLMClient
+    ) -> None:
+        """A material addition must not be skipped because the section is long.
+
+        Regression: a ratio gate (similarity > 0.98) skipped a new ~90-word
+        risk paragraph appended to a ~70k-character section (ratio 0.995).
+        """
+        body = " ".join(
+            f"Risk {i}: our operations in region {i} depend on suppliers "
+            "whose disruption could adversely affect results."
+            for i in range(700)
+        )
+        addition = (
+            " We are the subject of a formal SEC investigation into our revenue "
+            "recognition practices, and an adverse outcome could result in "
+            "material fines, restatements and restrictions on our business."
+        ) * 3
+        mock_llm.extract_json.return_value = []  # type: ignore[attr-defined]
+        await RiskDifferEngine().extract(
+            self._rf(body + addition, "2024-11-01"),
+            mock_llm,
+            previous_sections=self._rf(body, "2023-11-01"),
+        )
+        mock_llm.extract_json.assert_awaited_once()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_numeric_only_updates_skip_llm(self, mock_llm: LLMClient) -> None:
+        previous = "As of September 30, 2023, we had $1.2 billion of debt. " * 50
+        current = "As of September 28, 2024, we had $1.4 billion of debt. " * 50
+        await RiskDifferEngine().extract(
+            self._rf(current, "2024-11-01"),
+            mock_llm,
+            previous_sections=self._rf(previous, "2023-11-01"),
+        )
         mock_llm.extract_json.assert_not_called()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -973,13 +1029,13 @@ class TestSimilarityFastPath:
         from alphasig.engines import risk_differ
 
         seen: list[bool] = []
-        real = risk_differ.compute_text_similarity
+        real = risk_differ.diff_stats
 
-        def spy(a: str, b: str) -> float:
+        def spy(a: str, b: str) -> tuple[float, int]:
             seen.append(threading.current_thread() is threading.main_thread())
             return real(a, b)
 
-        monkeypatch.setattr(risk_differ, "compute_text_similarity", spy)
+        monkeypatch.setattr(risk_differ, "diff_stats", spy)
         section = FilingSection(
             filing_accession="acc",
             ticker="AAPL",

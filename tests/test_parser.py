@@ -121,6 +121,22 @@ class TestSectionBoundaries:
         assert "CYBER" not in rf.text
         assert "Unresolved" not in rf.text
 
+    @pytest.mark.parametrize(
+        "split", ["<span>R</span><span>isk</span>", "Ri<span>sk</span>"]
+    )
+    def test_heading_with_separately_styled_initial(self, split: str) -> None:
+        """Regression: Oracle styles each word's first letter(s) separately,
+        which flattens to "R isk Factors" / "Ri sk Factors"."""
+        body = (
+            f"<p><b>Item 1. Business</b></p><p>BUSINESS {_FILLER}</p>"
+            f"<p><b>Item 1A. {split} Factors</b></p><p>RISKS {_FILLER}</p>"
+            f"<p><b>Item 2. Properties</b></p><p>PROPS {_FILLER}</p>"
+        )
+        rf = find_section(parse_filing(_filing(body)), "risk_factors")
+        assert rf is not None
+        assert "RISKS" in rf.text
+        assert "PROPS" not in rf.text
+
     def test_ten_q_part_ii_risk_factors(self) -> None:
         body = (
             f"<p>PART I, Item 2. Management's Discussion and Analysis</p>"
