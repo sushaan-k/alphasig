@@ -44,6 +44,20 @@ All notable changes to this project are documented here. The format follows
 - `Filing.accepted_at`, `Filing.available_at` and `FilingSection.available_at`.
 - 8-K filings are parsed as a single `current_report` section.
 - `SignalStore` is a context manager; `LLMClient` tracks cached input tokens.
+- `SignalStore.to_arrow()` / `to_pandas()`: query results as a pyarrow Table
+  or pandas DataFrame (same schema as the Parquet export) without building
+  `Signal` objects. pandas is the optional `alphasig[pandas]` extra.
+- Incremental extraction: `Pipeline.extract(incremental=True)` /
+  `alphasig extract --incremental` records finished (filing, engine) jobs in
+  an `extraction_log` table with their signals and skips them next time, so
+  re-runs resume after a crash or pick up only new filings.
+- LLM response cache: `Pipeline(llm_cache_dir=...)` / `--llm-cache-dir`
+  stores responses on disk keyed by a hash of the full request (model,
+  prompts and parameters); re-runs reuse them instead of calling the API.
+- `Pipeline(llm_concurrency=...)` / `--llm-concurrency` sets the maximum
+  in-flight LLM requests (default 8).
+- An offline benchmark suite (`python -m benchmarks.run`, see
+  `docs/benchmarks.md`), run in CI in `--quick` mode.
 - `py.typed`, `alphasig --version`, a wheel smoke-test CI job and a
   trusted-publishing release workflow.
 
@@ -71,6 +85,14 @@ All notable changes to this project are documented here. The format follows
 
 - Storing 5,000 signals: 14.7 s to 0.16 s (Arrow bulk insert).
 - Engines for all filings run concurrently and each MD&A is classified once.
+- Section parsing makes one lxml pass over the document instead of walking
+  the BeautifulSoup tree per candidate heading, with identical output: 3.57 s
+  to 0.47 s for five real 10-K/10-Q filings (13.1 MB) in the offline
+  benchmark.
+- End-to-end, the offline benchmark pipeline (6 tickers × 6 filings, mock
+  LLM) runs in 13.8 s instead of 26.7 s for 0.1.x; see `docs/benchmarks.md`.
+- The risk differ's similarity check runs in a worker thread instead of
+  blocking the event loop, and returns immediately for unchanged text.
 
 ### Removed
 

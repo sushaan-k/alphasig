@@ -41,6 +41,16 @@ daily = df.pivot_table(
 )
 ```
 
+Signals already stored in DuckDB load straight into a DataFrame (needs
+`pip install "alphasig[pandas]"`; `to_arrow()` needs only pyarrow):
+
+```python
+from alphasig import SignalStore
+
+with SignalStore("alphasig.duckdb") as store:
+    df = store.to_pandas(min_confidence=0.8)
+```
+
 Filings accepted after the 16:00 ET close are only tradeable at the next
 session; shift those rows forward before joining to daily bars:
 

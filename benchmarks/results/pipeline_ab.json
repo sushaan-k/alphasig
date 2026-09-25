@@ -1,0 +1,57 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-09-25T20:27:36+00:00",
+    "git_commit": "4f86ed04eb2a1b272715dabd0adc59ec0279541d",
+    "code_under_test": "4f86ed04eb2a1b272715dabd0adc59ec0279541d",
+    "git_dirty": false,
+    "alphasig_import_path": "src/alphasig",
+    "python": "3.11.15",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.44-fc-v42-x86_64-with-glibc2.39",
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "cpu_count": 4,
+    "packages": {
+      "alphasig": "0.2.0",
+      "beautifulsoup4": "4.15.0",
+      "lxml": "6.1.3",
+      "duckdb": "1.5.5",
+      "pyarrow": "25.0.1",
+      "networkx": "3.6.1",
+      "httpx": "0.28.1",
+      "pydantic": "2.13.5",
+      "anthropic": "1.8.0",
+      "respx": "0.23.1",
+      "pandas": "3.0.6"
+    },
+    "seed": 1234
+  },
+  "baseline_rev": "54efd36",
+  "repeat": 3,
+  "baseline": {
+    "wall_s_median": 26.697,
+    "wall_s_all": [
+      26.811,
+      25.705,
+      26.697
+    ],
+    "llm_calls": 372,
+    "llm_max_inflight": 12,
+    "edgar_requests": 45,
+    "signals": 120,
+    "alphasig_path": "external:base54/src/alphasig"
+  },
+  "current": {
+    "wall_s_median": 13.776,
+    "wall_s_all": [
+      13.765,
+      13.81,
+      13.776
+    ],
+    "llm_calls": 366,
+    "llm_max_inflight": 8,
+    "edgar_requests": 43,
+    "signals": 120,
+    "alphasig_path": "src/alphasig"
+  },
+  "speedup_median": 1.938
+}

@@ -175,6 +175,60 @@ signals.
 sector map, making it useful for spotting concentrated bullish or bearish
 portfolio exposure before a backtest or daily review.
 
+### Re-runs: incremental extraction and the LLM cache
+
+```bash
+# Record finished (filing, engine) jobs in --db and skip them next time:
+# resume after a crash, or run daily to process only new filings.
+alphasig extract --tickers AAPL MSFT --incremental
+
+# Keep LLM responses on disk; identical requests are never paid for twice.
+alphasig extract --tickers AAPL MSFT --llm-cache-dir ./llm_cache
+
+# At most 4 LLM requests in flight (default 8).
+alphasig extract --tickers AAPL MSFT --llm-concurrency 4
+```
+
+```python
+pipeline = Pipeline(
+    user_agent="Your Name your@email.com",
+    db_path="alphasig.duckdb",
+    llm_cache_dir="./llm_cache",
+    llm_concurrency=4,
+)
+new_signals = await pipeline.extract(tickers=["AAPL"], incremental=True)
+```
+
+- **Incremental** mode keeps an `extraction_log` table next to the signals.
+  Each ticker's finished jobs and their signals are written in one
+  transaction as soon as the ticker completes, and only filings with
+  unfinished jobs (plus the prior filings they are diffed against) are
+  downloaded. Failed jobs are retried on the next run. A job is redone, and
+  its stored signals replaced, when a diff engine's previous filing changes
+  or when a `--calibrate` run finds signals Jev has not scored. The returned
+  collection contains only the newly extracted signals. It needs a database
+  (`db_path` / `--db`).
+- The **LLM cache** key is a SHA-256 of the complete request: model, system
+  prompt, filing text and every parameter. Changing any of them is a miss.
+  Only successful responses are cached. A cache hit replays the stored
+  answer, so a re-run over the same filings gives the same signals.
+
+### Analytics: Arrow and pandas
+
+`SignalStore.to_arrow()` returns stored signals as a `pyarrow.Table` with the
+same schema as the Parquet export, without building `Signal` objects, which
+is the fast path for large stores. `to_pandas()` returns a DataFrame and needs
+`pip install "alphasig[pandas]"`. Both take the same filters as `query()` and
+return every match unless you pass `limit`.
+
+```python
+from alphasig import SignalStore
+
+with SignalStore("alphasig.duckdb") as store:
+    table = store.to_arrow(signal_type="risk_change", min_confidence=0.8)
+    df = store.to_pandas(ticker="AAPL")
+```
+
 ### REST API
 
 ```bash
@@ -243,12 +297,32 @@ embed a secret.
 | EDGAR User-Agent | `ALPHASIG_USER_AGENT` | Required: `"Name email@domain"` per the SEC fair-access policy. Or `Pipeline(user_agent=...)` / `--user-agent` |
 | Model | `ALPHASIG_MODEL` | Default `claude-sonnet-5`. Or `Pipeline(model=...)` / `--model` |
 | Jev API key | `TYPESAFE_API_KEY` | Only for `--calibrate` / `JevCalibrator` (`alphasig[jev]`). `TYPESAFE_DEFAULT_MODEL` overrides `jev-latest` |
+| LLM concurrency | -- | Default 8 in-flight requests. `Pipeline(llm_concurrency=...)` / `--llm-concurrency` |
+| LLM response cache | -- | Off by default. `Pipeline(llm_cache_dir=...)` / `--llm-cache-dir` |
 
 EDGAR requests share one connection pool and are spaced to stay under the
 SEC's 10 requests/second limit, with backoff on 429/5xx that honours
 `Retry-After`. Downloaded filings are cached in `./edgar_cache` (disable with
 `cache_dir=None`). LLM calls reuse a cached system prompt per engine and are
 retried by the Anthropic SDK on rate limits and overload.
+
+## Benchmarks
+
+| Workload | 0.1.x (`54efd36`) | 0.2.0 |
+|---|---|---|
+| End-to-end pipeline, 6 tickers × 6 filings, mock LLM at 250 ms/call (median of 3, interleaved) | 26.7 s | **13.8 s** (1.94×) |
+| Re-run of the same pipeline with `llm_cache_dir` | -- | 3.0 s, 0 LLM calls |
+| Re-run with `incremental=True` | -- | 0.71 s, 0 LLM calls |
+| Parse 5 real 10-K/10-Q filings (13.1 MB) | 3.66 s | **0.47 s** (27.7 MB/s) |
+| Store 10,000 signals in DuckDB | 57.2 s | **0.55 s** |
+| Store 1,000,000 signals / read them back with `to_arrow()` | -- | 12.0 s / 0.95 s |
+
+<sub>Offline suite with mocked EDGAR and a fake LLM; parser rows use real
+filings, all other rows synthetic data. Measured in a shared 4-vCPU cloud
+container (Intel Xeon @ 2.80 GHz, CPython 3.11); expect noise of up to ~1.5×.
+Reproduce with `python -m benchmarks.run` (and `python -m
+benchmarks.pipeline_ab` for the interleaved comparison). Methodology, all
+results and known limitations: [docs/benchmarks.md](docs/benchmarks.md).</sub>
 
 ## Signal Schema
 
@@ -294,6 +368,7 @@ alphasig/
 │       ├── api.py           # FastAPI REST server
 │       └── webhook.py       # Webhook notifications
 ├── tests/                   # pytest suite with mocked EDGAR/LLM
+├── benchmarks/              # Offline benchmark suite (python -m benchmarks.run)
 ├── examples/
 │   ├── demo.py              # Offline walkthrough (no API key needed)
 │   ├── mag7_analysis.py     # Analyse Magnificent 7
@@ -302,7 +377,8 @@ alphasig/
 └── docs/
     ├── engines.md           # Engine documentation
     ├── signal_schema.md     # Signal schema reference
-    └── backtesting.md       # Backtesting integration guide
+    ├── backtesting.md       # Backtesting integration guide
+    └── benchmarks.md        # Benchmark methodology and results
 ```
 
 ## Demo
@@ -325,6 +401,7 @@ uv run pytest
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run mypy src/alphasig/
+uv run python -m benchmarks.run --quick   # offline benchmark smoke run
 ```
 
 The test suite mocks EDGAR and the LLM and refuses real network access.
