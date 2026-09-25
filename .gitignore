@@ -42,3 +42,7 @@ edgar_cache/
 *.parquet
 *.duckdb
 *.duckdb.wal
+
+# Example outputs
+mag7_signals.csv
+supply_chain_graph.png

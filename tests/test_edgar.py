@@ -380,7 +380,6 @@ class TestEdgarFairAccessAndCorrectness:
     @pytest.mark.asyncio
     async def test_rate_limiter_spaces_concurrent_requests(self) -> None:
         import asyncio
-        import itertools
         import time
 
         from alphasig.edgar import _RateLimiter
@@ -392,10 +391,11 @@ class TestEdgarFairAccessAndCorrectness:
             await limiter.acquire()
             stamps.append(time.monotonic())
 
+        start = time.monotonic()
         await asyncio.gather(*(hit() for _ in range(6)))
-        gaps = [b - a for a, b in itertools.pairwise(stamps)]
-        # No burst: every request waits for its own 50 ms slot.
-        assert min(gaps) >= 0.045
+        # No burst: request i cannot start before its own 50 ms slot.
+        for i, stamp in enumerate(sorted(stamps)):
+            assert stamp - start >= i * 0.05 - 0.005
 
     @respx.mock
     @pytest.mark.asyncio

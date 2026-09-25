@@ -145,7 +145,8 @@ class LLMClient:
             "messages": [{"role": "user", "content": user}],
         }
         if temperature is not None:
-            params["temperature"] = temperature
+            # Not a typed SDK parameter any more; only older models accept it.
+            params["extra_body"] = {"temperature": temperature}
         try:
             async with self._semaphore:
                 response = await self._client.messages.create(**params)
