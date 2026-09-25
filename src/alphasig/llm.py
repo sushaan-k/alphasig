@@ -3,14 +3,22 @@
 Wraps the Anthropic SDK to provide JSON extraction with automatic retry,
 bounded concurrency, prompt caching, token accounting, and
 context-window guards.
+
+An optional :class:`LLMCache` stores responses on disk keyed by a hash of
+the full request (model, prompts and every request parameter), so
+re-running over the same filings costs no API calls for work already done.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import json
 import os
 import re
+import tempfile
+from pathlib import Path
 from typing import Any, TypeVar
 
 import anthropic
@@ -64,6 +72,72 @@ def parse_json_response(raw: str) -> Any:
     raise ValueError("no JSON value found in model response")
 
 
+class LLMCache:
+    """Response cache keyed by a hash of the complete request.
+
+    The key covers the model, the system prompt, the user message and every
+    other request parameter (``max_tokens``, temperature, ...), so any
+    change to a prompt or a setting is a miss.  Only successful responses
+    are stored -- never errors, refusals or truncated output.
+
+    Note that a cache hit replays the earlier response, so repeat runs are
+    deterministic even though sampling is not.
+
+    Args:
+        directory: Directory for the persistent cache (one small JSON file
+            per response, written atomically), or ``None`` to keep entries
+            in memory only for the lifetime of this object.
+    """
+
+    def __init__(self, directory: str | Path | None = None) -> None:
+        self._memory: dict[str, str] = {}
+        self._dir = Path(directory) if directory else None
+        if self._dir:
+            self._dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def key(params: dict[str, Any]) -> str:
+        """Return the cache key for a Messages API request."""
+        payload = json.dumps(
+            params, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _path(self, key: str) -> Path | None:
+        return self._dir / key[:2] / f"{key}.json" if self._dir else None
+
+    def get(self, key: str) -> str | None:
+        """Return the cached response text, or ``None`` on a miss."""
+        if key in self._memory:
+            return self._memory[key]
+        path = self._path(key)
+        if path is None or not path.exists():
+            return None
+        try:
+            text = str(json.loads(path.read_text(encoding="utf-8"))["text"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None  # unreadable or corrupt entry: treat as a miss
+        self._memory[key] = text
+        return text
+
+    def put(self, key: str, text: str, *, model: str) -> None:
+        """Store a response (in memory, and on disk when configured)."""
+        self._memory[key] = text
+        path = self._path(key)
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"model": model, "text": text}, fh)
+            os.replace(tmp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
+
 class LLMClient:
     """Thin wrapper around the Anthropic Messages API.
 
@@ -73,12 +147,17 @@ class LLMClient:
         model: Model identifier, e.g. ``"claude-sonnet-5"``.
         max_output_tokens: Maximum tokens the model may generate.
         max_concurrency: Maximum in-flight requests through this client.
+        cache: Optional :class:`LLMCache`.  Cached requests are answered
+            without an API call (and without waiting for a concurrency
+            slot); identical requests already in flight share one call.
 
     Attributes:
         input_tokens: Running total of input tokens billed by this client.
         output_tokens: Running total of output tokens billed by this client.
         cache_read_tokens: Running total of input tokens served from the
             prompt cache.
+        api_calls: Number of successful API responses received.
+        cache_hits: Number of requests answered from :class:`LLMCache`.
     """
 
     def __init__(
@@ -87,16 +166,23 @@ class LLMClient:
         model: str = DEFAULT_MODEL,
         max_output_tokens: int = _MAX_OUTPUT_TOKENS,
         max_concurrency: int = _MAX_CONCURRENCY,
+        cache: LLMCache | None = None,
     ) -> None:
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key, max_retries=_MAX_RETRIES
         )
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._cache = cache
+        self._inflight: dict[str, asyncio.Future[str]] = {}
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_read_tokens = 0
+        self.api_calls = 0
+        self.cache_hits = 0
 
     async def aclose(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -123,7 +209,9 @@ class LLMClient:
         The system prompt is sent as a cached prefix: engines reuse the same
         instructions for every filing, so repeat calls read it from the
         prompt cache (prefixes below the model's minimum are simply not
-        cached).
+        cached).  Separately, when the client has an :class:`LLMCache`, a
+        request identical to an earlier successful one is answered from it
+        without calling the API.
 
         Raises:
             LLMRateLimitError: On 429 responses that persist after the SDK's
@@ -147,6 +235,31 @@ class LLMClient:
         if temperature is not None:
             # Not a typed SDK parameter any more; only older models accept it.
             params["extra_body"] = {"temperature": temperature}
+        if self._cache is None:
+            return await self._send(params)
+
+        key = LLMCache.key(params)
+        cached = self._cache.get(key)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
+        pending = self._inflight.get(key)
+        if pending is not None:
+            self.cache_hits += 1
+            return await asyncio.shield(pending)
+
+        async def _fetch_and_store(cache: LLMCache) -> str:
+            text = await self._send(params)
+            cache.put(key, text, model=self._model)
+            return text
+
+        task = asyncio.ensure_future(_fetch_and_store(self._cache))
+        self._inflight[key] = task
+        task.add_done_callback(lambda _: self._inflight.pop(key, None))
+        return await asyncio.shield(task)
+
+    async def _send(self, params: dict[str, Any]) -> str:
+        """Send one request under the concurrency limit; return its text."""
         try:
             async with self._semaphore:
                 response = await self._client.messages.create(**params)
@@ -162,6 +275,7 @@ class LLMClient:
 
         usage = response.usage
         cache_read = getattr(usage, "cache_read_input_tokens", None) or 0
+        self.api_calls += 1
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
         self.cache_read_tokens += cache_read
