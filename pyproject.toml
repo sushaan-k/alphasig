@@ -110,7 +110,7 @@ select = [
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["alphasig"]
+known-first-party = ["alphasig", "benchmarks"]
 
 [tool.mypy]
 python_version = "3.11"

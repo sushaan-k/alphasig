@@ -46,3 +46,6 @@ edgar_cache/
 # Example outputs
 mag7_signals.csv
 supply_chain_graph.png
+
+# Benchmark fixture cache (downloaded, checksum-verified)
+benchmarks/.cache/

@@ -1,0 +1,476 @@
+{
+  "note": "**0.1.x baseline.** The suite run against the source at `54efd36` (the 0.1.x code base just renamed to `alphasig`, before the 0.2.0 fixes and optimisations), with the harness from revision `9def475`. Measurements are unchanged from that run.",
+  "environment": {
+    "timestamp_utc": "2026-09-25T19:09:19+00:00",
+    "git_commit": "9def475896b6d72377410e9674736c66c6e62533",
+    "code_under_test": "54efd364b7b3",
+    "git_dirty": true,
+    "alphasig_import_path": "external:baseline_src/src/alphasig",
+    "python": "3.11.15",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.44-fc-v42-x86_64-with-glibc2.39",
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "cpu_count": 4,
+    "packages": {
+      "alphasig": "0.2.0",
+      "beautifulsoup4": "4.15.0",
+      "lxml": "6.1.3",
+      "duckdb": "1.5.5",
+      "pyarrow": "25.0.1",
+      "networkx": "3.6.1",
+      "httpx": "0.28.1",
+      "pydantic": "2.13.5",
+      "anthropic": "0.125.0",
+      "respx": "0.23.1",
+      "pandas": null
+    },
+    "seed": 1234
+  },
+  "quick": false,
+  "benches": {
+    "parser": {
+      "repeat": 5,
+      "real_fixtures_available": 5,
+      "real_per_document": {
+        "Apple.10-K": {
+          "filings": 1,
+          "total_mb": 1.899,
+          "median_s": 0.4079,
+          "min_s": 0.3861,
+          "mb_per_s": 4.654,
+          "filings_per_s": 2.452,
+          "repeat": 5
+        },
+        "Apple.10-Q": {
+          "filings": 1,
+          "total_mb": 1.141,
+          "median_s": 0.288,
+          "min_s": 0.248,
+          "mb_per_s": 3.961,
+          "filings_per_s": 3.472,
+          "repeat": 5
+        },
+        "Nvidia.10-K": {
+          "filings": 1,
+          "total_mb": 2.669,
+          "median_s": 0.474,
+          "min_s": 0.3975,
+          "mb_per_s": 5.631,
+          "filings_per_s": 2.11,
+          "repeat": 5
+        },
+        "Oracle.10-K": {
+          "filings": 1,
+          "total_mb": 5.321,
+          "median_s": 1.3276,
+          "min_s": 1.2654,
+          "mb_per_s": 4.008,
+          "filings_per_s": 0.753,
+          "repeat": 5
+        },
+        "Oracle.10-Q": {
+          "filings": 1,
+          "total_mb": 2.038,
+          "median_s": 0.4273,
+          "min_s": 0.394,
+          "mb_per_s": 4.771,
+          "filings_per_s": 2.34,
+          "repeat": 5
+        }
+      },
+      "real_corpus": {
+        "filings": 5,
+        "total_mb": 13.068,
+        "median_s": 3.6586,
+        "min_s": 3.4817,
+        "mb_per_s": 3.572,
+        "filings_per_s": 1.367,
+        "repeat": 5
+      },
+      "synthetic_corpus": {
+        "filings": 40,
+        "total_mb": 25.521,
+        "median_s": 9.9276,
+        "min_s": 9.3307,
+        "mb_per_s": 2.571,
+        "filings_per_s": 4.029,
+        "repeat": 5
+      },
+      "bench_wall_s": 105.54
+    },
+    "boundaries": {
+      "real_fixtures_available": 5,
+      "real_per_document": {
+        "Apple.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.9612,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 2777,
+            "gold_chars": 68759,
+            "pred_chars": 71536
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.8356,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 3020,
+            "gold_chars": 15346,
+            "pred_chars": 18366
+          }
+        },
+        "Apple.10-Q": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.2169,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 3383,
+            "gold_chars": 937,
+            "pred_chars": 4320
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.9781,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 390,
+            "gold_chars": 17447,
+            "pred_chars": 17837
+          }
+        },
+        "Nvidia.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.9994,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 50,
+            "gold_chars": 87676,
+            "pred_chars": 87726
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.8921,
+            "recall": 0.9995,
+            "start_error_chars": 18,
+            "end_error_chars": 4653,
+            "gold_chars": 38506,
+            "pred_chars": 43141
+          }
+        },
+        "Oracle.10-K": {
+          "risk_factors": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.8128,
+            "recall": 1.0,
+            "start_error_chars": -4538,
+            "end_error_chars": 13235,
+            "gold_chars": 77183,
+            "pred_chars": 94956
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.2917,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 175217,
+            "gold_chars": 72169,
+            "pred_chars": 247386
+          }
+        },
+        "Oracle.10-Q": {
+          "risk_factors": {
+            "detected": false,
+            "gold_chars": 692
+          },
+          "md_and_a": {
+            "detected": true,
+            "locatable": true,
+            "precision": 0.9927,
+            "recall": 1.0,
+            "start_error_chars": 0,
+            "end_error_chars": 447,
+            "gold_chars": 60858,
+            "pred_chars": 61305
+          }
+        }
+      },
+      "real_summary": {
+        "risk_factors": {
+          "documents": 5,
+          "detected": 4,
+          "mean_precision": 0.7476,
+          "mean_recall": 0.8,
+          "near_exact_(p,r>=0.99)": 1
+        },
+        "md_and_a": {
+          "documents": 5,
+          "detected": 5,
+          "mean_precision": 0.7981,
+          "mean_recall": 0.9999,
+          "near_exact_(p,r>=0.99)": 1
+        }
+      },
+      "synthetic_documents": 50,
+      "synthetic_summary": {
+        "risk_factors": {
+          "documents": 50,
+          "detected": 43,
+          "mean_precision": 0.917,
+          "mean_recall": 0.86,
+          "near_exact_(p,r>=0.99)": 0
+        },
+        "md_and_a": {
+          "documents": 50,
+          "detected": 50,
+          "mean_precision": 0.7731,
+          "mean_recall": 0.8,
+          "near_exact_(p,r>=0.99)": 0
+        }
+      },
+      "synthetic_by_variant": {
+        "workiva": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9628,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9662,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          }
+        },
+        "inline_toc": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 3,
+            "mean_precision": 0.3159,
+            "mean_recall": 0.3,
+            "near_exact_(p,r>=0.99)": 0
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.0,
+            "mean_recall": 0.0,
+            "near_exact_(p,r>=0.99)": 0
+          }
+        },
+        "caps_headings": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9616,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9667,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          }
+        },
+        "split_heading": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9633,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9674,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          }
+        },
+        "no_toc": {
+          "risk_factors": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.9606,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          },
+          "md_and_a": {
+            "documents": 10,
+            "detected": 10,
+            "mean_precision": 0.965,
+            "mean_recall": 1.0,
+            "near_exact_(p,r>=0.99)": 0
+          }
+        }
+      },
+      "bench_wall_s": 19.07
+    },
+    "risk_diff": {
+      "similarity_gate": [
+        {
+          "pair": "evolved",
+          "paragraphs": 10,
+          "chars_prev": 14851,
+          "chars_cur": 15113,
+          "similarity": 0.4885,
+          "median_s": 0.0409,
+          "chars_per_s": 733293
+        },
+        {
+          "pair": "evolved",
+          "paragraphs": 40,
+          "chars_prev": 59821,
+          "chars_cur": 59979,
+          "similarity": 0.2999,
+          "median_s": 2.4651,
+          "chars_per_s": 48599
+        },
+        {
+          "pair": "evolved",
+          "paragraphs": 80,
+          "chars_prev": 117704,
+          "chars_cur": 117481,
+          "similarity": 0.2867,
+          "median_s": 14.0623,
+          "chars_per_s": 16725
+        },
+        {
+          "pair": "identical",
+          "paragraphs": 40,
+          "chars_prev": 59821,
+          "chars_cur": 59821,
+          "similarity": 1.0,
+          "median_s": 0.2162,
+          "chars_per_s": 553442
+        }
+      ],
+      "engine": {
+        "filing_pairs": 7,
+        "avg_section_chars": 67639,
+        "llm_calls": 7,
+        "signals": 7,
+        "median_s": 19.1852,
+        "pairs_per_s": 0.365
+      },
+      "bench_wall_s": 165.97
+    },
+    "storage": {
+      "insert_path": "executemany",
+      "sizes": [
+        {
+          "signals": 10000,
+          "insert_s": 57.1727,
+          "insert_rows_per_s": 175,
+          "ticker_eq_ms": 2.744,
+          "type_and_min_strength_ms": 10.552,
+          "time_range_30d_ms": 9.166,
+          "latest_1000_ms": 17.97,
+          "count_ms": 0.662,
+          "summary_ms": 5.543,
+          "query_all_to_signals_s": 0.19
+        },
+        {
+          "signals": 100000,
+          "skipped": "row-by-row insert too slow"
+        },
+        {
+          "signals": 1000000,
+          "skipped": "row-by-row insert too slow"
+        }
+      ],
+      "bench_wall_s": 58.1
+    },
+    "graph": {
+      "sizes": [
+        {
+          "edges_in": 1000,
+          "nodes": 135,
+          "edges_kept": 644,
+          "build_s": 0.0035,
+          "edges_per_s": 288695,
+          "exposure_hub_ms": 0.777,
+          "hub_total_exposed": 255,
+          "most_connected_ms": 0.142,
+          "from_signal_collection_s": 0.0067
+        },
+        {
+          "edges_in": 10000,
+          "nodes": 1104,
+          "edges_kept": 6266,
+          "build_s": 0.0523,
+          "edges_per_s": 191102,
+          "exposure_hub_ms": 11.55,
+          "hub_total_exposed": 2539,
+          "most_connected_ms": 3.846,
+          "from_signal_collection_s": 0.2147
+        },
+        {
+          "edges_in": 100000,
+          "nodes": 10321,
+          "edges_kept": 63489,
+          "build_s": 0.4765,
+          "edges_per_s": 209845,
+          "exposure_hub_ms": 90.106,
+          "hub_total_exposed": 25369,
+          "most_connected_ms": 46.304,
+          "from_signal_collection_s": 1.6797
+        }
+      ],
+      "bench_wall_s": 5.61
+    },
+    "pipeline": {
+      "tickers": 6,
+      "filings_per_ticker": 6,
+      "llm_latency_s": 0.25,
+      "net_latency_s": 0.02,
+      "scenarios": {
+        "cold_default": {
+          "wall_s": 28.862,
+          "llm_calls": 372,
+          "llm_max_inflight": 12,
+          "llm_input_mchars": 5.113,
+          "edgar_requests": 45,
+          "edgar_archive_requests": 36,
+          "signals": 120
+        },
+        "warm_edgar_cache": {
+          "wall_s": 27.092,
+          "llm_calls": 372,
+          "llm_max_inflight": 12,
+          "llm_input_mchars": 5.113,
+          "edgar_requests": 9,
+          "edgar_archive_requests": 0,
+          "signals": 120
+        },
+        "cold_llm_concurrency_*": {
+          "skipped": "Pipeline has no llm_concurrency option"
+        },
+        "llm_disk_cache_*": {
+          "skipped": "Pipeline has no llm_cache_dir option"
+        },
+        "incremental_*": {
+          "skipped": "Pipeline.extract has no incremental option"
+        }
+      },
+      "bench_wall_s": 56.03
+    }
+  }
+}
