@@ -61,8 +61,12 @@ viz = [
 jev = [
     "typesafe-sdk>=0.7,<1",
 ]
+pandas = [
+    "pandas>=2.0",
+]
 dev = [
     "typesafe-sdk>=0.7,<1",
+    "pandas>=2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",

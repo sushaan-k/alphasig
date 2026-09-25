@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -201,3 +202,179 @@ class TestSignalStoreRegressions:
             store.insert([_sig(1)])
             (out,) = store.query()
             assert out.timestamp == datetime(2024, 11, 1, 22, 4, tzinfo=UTC)
+
+
+class TestArrowExport:
+    """SignalStore.to_arrow / to_pandas."""
+
+    @pytest.fixture
+    def store(self, sample_signals: list[Signal]) -> SignalStore:
+        s = SignalStore(":memory:")
+        s.insert(sample_signals)
+        return s
+
+    def test_to_arrow_matches_parquet_schema(self, store: SignalStore) -> None:
+        from alphasig.output.parquet import _SCHEMA
+
+        table = store.to_arrow()
+        assert table.schema == _SCHEMA
+        assert table.num_rows == 4
+
+    def test_to_arrow_filters_and_limit(self, store: SignalStore) -> None:
+        assert store.to_arrow(ticker="aapl").num_rows == 2
+        assert store.to_arrow(signal_type="m_and_a").column("ticker").to_pylist() == [
+            "MSFT"
+        ]
+        assert store.to_arrow(min_confidence=0.9).num_rows == 1
+        assert store.to_arrow(limit=1).num_rows == 1
+
+    def test_to_arrow_agrees_with_query(self, store: SignalStore) -> None:
+        import json
+
+        rows = store.to_arrow(ticker="AAPL").to_pylist()
+        signals = store.query(ticker="AAPL")
+        assert [r["timestamp"] for r in rows] == [s.timestamp for s in signals]
+        assert [json.loads(r["metadata"]) for r in rows] == [
+            s.metadata for s in signals
+        ]
+        assert rows[0]["timestamp"].tzinfo is not None
+
+    def test_to_arrow_time_range_ignores_session_time_zone(self) -> None:
+        with SignalStore(":memory:") as store:
+            store._conn.execute("SET TimeZone = 'America/New_York'")
+            store.insert([_sig(1)])
+            instant = datetime(2024, 11, 1, 22, 4, tzinfo=UTC)
+            assert store.to_arrow(start=instant, end=instant).num_rows == 1
+            (row,) = store.to_arrow().to_pylist()
+            assert row["timestamp"] == instant
+
+    def test_to_arrow_empty_store(self) -> None:
+        with SignalStore(":memory:") as store:
+            table = store.to_arrow()
+            assert table.num_rows == 0
+            assert "timestamp" in table.schema.names
+
+    def test_to_pandas_without_pandas_is_a_clear_error(
+        self, store: SignalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.util
+
+        real = importlib.util.find_spec
+        monkeypatch.setattr(
+            importlib.util,
+            "find_spec",
+            lambda name, *a: None if name == "pandas" else real(name, *a),
+        )
+        with pytest.raises(ImportError, match=r"alphasig\[pandas\]"):
+            store.to_pandas()
+
+    def test_to_pandas(self, store: SignalStore) -> None:
+        pytest.importorskip("pandas")
+        df = store.to_pandas(direction="bearish")
+        assert len(df) == 2
+        assert str(df["timestamp"].dt.tz) == "UTC"
+
+
+class TestExtractionLog:
+    """The extraction_log behind Pipeline.extract(incremental=True)."""
+
+    @staticmethod
+    def _job(accession: str, engine: str = "risk_differ", **kw: object) -> Any:
+        from alphasig.storage import ExtractionRecord
+
+        fields: dict[str, Any] = {
+            "accession": accession,
+            "engine": engine,
+            "ticker": "AAPL",
+            "signal_count": 1,
+        }
+        fields.update(kw)
+        return ExtractionRecord(**fields)
+
+    @staticmethod
+    def _job_sig(accession: str, i: int) -> Signal:
+        return _sig(i, metadata={"_filing_accession": accession})
+
+    def test_record_and_read_back(self) -> None:
+        with SignalStore(":memory:") as store:
+            jobs = [
+                self._job("acc-1", previous_accession="acc-0", calibrated=True),
+                self._job("acc-1", "m_and_a", signal_count=0),
+            ]
+            assert store.record_extraction([self._job_sig("acc-1", 1)], jobs) == 1
+            done = store.completed_extractions()
+            assert set(done) == {("acc-1", "risk_differ"), ("acc-1", "m_and_a")}
+            assert done[("acc-1", "risk_differ")] == jobs[0]
+            assert done[("acc-1", "m_and_a")].previous_accession is None
+            assert not done[("acc-1", "m_and_a")].calibrated
+
+    def test_rerecording_is_idempotent(self) -> None:
+        with SignalStore(":memory:") as store:
+            signals = [self._job_sig("acc-1", 1)]
+            store.record_extraction(signals, [self._job("acc-1")])
+            # Same job again: the log row is overwritten, the signal skipped.
+            assert store.record_extraction(signals, [self._job("acc-1")]) == 0
+            assert store.count() == 1
+            assert len(store.completed_extractions()) == 1
+
+    def test_replace_deletes_the_jobs_previous_signals(self) -> None:
+        with SignalStore(":memory:") as store:
+            store.record_extraction(
+                [
+                    self._job_sig("acc-1", 1),
+                    self._job_sig("acc-2", 2),
+                    _sig(
+                        3,
+                        signal_type=SignalType.TONE_SHIFT,
+                        metadata={"_filing_accession": "acc-1"},
+                    ),
+                ],
+                [self._job("acc-1"), self._job("acc-2")],
+            )
+            store.record_extraction(
+                [self._job_sig("acc-1", 4)],
+                [self._job("acc-1", calibrated=True)],
+                replace=[("acc-1", "risk_change")],
+            )
+            contexts = sorted(s.context for s in store.query())
+            # acc-1's old risk signal is gone; other jobs are untouched.
+            assert contexts == ["risk 2", "risk 3", "risk 4"]
+            assert store.completed_extractions()[("acc-1", "risk_differ")].calibrated
+
+    def test_failure_rolls_back_signals_and_log(self) -> None:
+        import duckdb
+
+        from alphasig.exceptions import StorageError
+
+        store = SignalStore(":memory:")
+        store.record_extraction([self._job_sig("acc-1", 1)], [self._job("acc-1")])
+        real = store._conn
+
+        class _FailingLogConn:
+            def __getattr__(self, name: str) -> object:
+                return getattr(real, name)
+
+            def execute(self, sql: str, *args: object) -> object:
+                if "extraction_log" in sql:
+                    raise duckdb.Error("disk full")
+                return real.execute(sql, *args)
+
+        store._conn = _FailingLogConn()  # type: ignore[assignment]
+        with pytest.raises(StorageError):
+            store.record_extraction(
+                [self._job_sig("acc-2", 2)],
+                [self._job("acc-2")],
+                replace=[("acc-1", "risk_change")],
+            )
+        store._conn = real
+        # Neither the delete, the insert nor the log row was kept.
+        assert sorted(s.context for s in store.query()) == ["risk 1"]
+        assert set(store.completed_extractions()) == {("acc-1", "risk_differ")}
+        store.close()
+
+    def test_log_survives_reopen(self, tmp_path: Any) -> None:
+        path = tmp_path / "log.duckdb"
+        with SignalStore(path) as store:
+            store.record_extraction([], [self._job("acc-1")])
+        with SignalStore(path) as store:
+            assert ("acc-1", "risk_differ") in store.completed_extractions()

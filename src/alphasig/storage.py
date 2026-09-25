@@ -7,8 +7,10 @@ created on first use.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -20,6 +22,7 @@ import structlog
 
 from alphasig.exceptions import StorageError
 from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.output.parquet import _SCHEMA as _ARROW_SCHEMA
 
 logger = structlog.get_logger()
 
@@ -41,6 +44,27 @@ CREATE TABLE IF NOT EXISTS signals (
 """
 
 _CREATE_SEQUENCE = "CREATE SEQUENCE IF NOT EXISTS signal_seq START 1;"
+
+# One row per (filing, engine) job that finished, written in the same
+# transaction as the job's signals, so incremental runs can skip work that
+# is already done (see ``Pipeline.extract(incremental=True)``).
+_CREATE_EXTRACTION_LOG = """\
+CREATE TABLE IF NOT EXISTS extraction_log (
+    accession           VARCHAR NOT NULL,
+    engine              VARCHAR NOT NULL,
+    ticker              VARCHAR,
+    previous_accession  VARCHAR,
+    calibrated          BOOLEAN NOT NULL DEFAULT FALSE,
+    signal_count        INTEGER,
+    completed_at        TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (accession, engine)
+);
+"""
+
+_COLUMNS = (
+    "timestamp, ticker, signal_type, direction, strength, "
+    "confidence, context, source_filing, related_tickers, metadata"
+)
 
 # Bulk insert from a registered Arrow table, skipping signals that are
 # already stored so re-running an extraction does not duplicate rows.
@@ -65,6 +89,69 @@ WHERE NOT EXISTS (
 """
 
 
+@dataclass(frozen=True)
+class ExtractionRecord:
+    """A finished (filing, engine) extraction job in the ``extraction_log``.
+
+    Attributes:
+        accession: Accession number of the filing.
+        engine: Engine name, e.g. ``"risk_differ"``.
+        ticker: Ticker the filing belongs to.
+        signal_count: Signals the job produced (after calibration).
+        previous_accession: The prior filing the job compared against
+            (diff engines only), ``None`` when there was none.
+        calibrated: Whether the job's signals were re-scored by Jev.
+    """
+
+    accession: str
+    engine: str
+    ticker: str
+    signal_count: int
+    previous_accession: str | None = None
+    calibrated: bool = False
+
+
+def _where_clause(
+    *,
+    ticker: str | None = None,
+    signal_type: str | None = None,
+    direction: str | None = None,
+    min_strength: float | None = None,
+    min_confidence: float | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the WHERE clause shared by ``query`` and ``to_arrow``."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if ticker:
+        conditions.append("ticker = ?")
+        params.append(ticker.upper())
+    if signal_type:
+        conditions.append("signal_type = ?")
+        params.append(signal_type)
+    if direction:
+        conditions.append("direction = ?")
+        params.append(direction)
+    if min_strength is not None:
+        conditions.append("strength >= ?")
+        params.append(min_strength)
+    if min_confidence is not None:
+        conditions.append("confidence >= ?")
+        params.append(min_confidence)
+    # Timestamps are stored as naive UTC; binding an aware datetime would
+    # make DuckDB compare in the session's local time zone.
+    if start:
+        conditions.append("timestamp >= ?")
+        params.append(SignalStore._to_storage_timestamp(start))
+    if end:
+        conditions.append("timestamp <= ?")
+        params.append(SignalStore._to_storage_timestamp(end))
+
+    return (" AND ".join(conditions) if conditions else "1=1"), params
+
+
 class SignalStore:
     """DuckDB-backed storage for :class:`Signal` objects.
 
@@ -79,6 +166,7 @@ class SignalStore:
             self._conn = duckdb.connect(self._db_path)
             self._conn.execute(_CREATE_SEQUENCE)
             self._conn.execute(_CREATE_TABLE)
+            self._conn.execute(_CREATE_EXTRACTION_LOG)
         except duckdb.Error as exc:
             raise StorageError(
                 f"Failed to initialise DuckDB at {self._db_path}"
@@ -166,39 +254,17 @@ class SignalStore:
         Returns:
             List of matching signals.
         """
-        conditions: list[str] = []
-        params: list[Any] = []
-
-        if ticker:
-            conditions.append("ticker = ?")
-            params.append(ticker.upper())
-        if signal_type:
-            conditions.append("signal_type = ?")
-            params.append(signal_type)
-        if direction:
-            conditions.append("direction = ?")
-            params.append(direction)
-        if min_strength is not None:
-            conditions.append("strength >= ?")
-            params.append(min_strength)
-        if min_confidence is not None:
-            conditions.append("confidence >= ?")
-            params.append(min_confidence)
-        # Timestamps are stored as naive UTC; binding an aware datetime would
-        # make DuckDB compare in the session's local time zone.
-        if start:
-            conditions.append("timestamp >= ?")
-            params.append(self._to_storage_timestamp(start))
-        if end:
-            conditions.append("timestamp <= ?")
-            params.append(self._to_storage_timestamp(end))
-
-        where = " AND ".join(conditions) if conditions else "1=1"
+        where, params = _where_clause(
+            ticker=ticker,
+            signal_type=signal_type,
+            direction=direction,
+            min_strength=min_strength,
+            min_confidence=min_confidence,
+            start=start,
+            end=end,
+        )
         sql = (
-            f"SELECT timestamp, ticker, signal_type, direction, "
-            f"strength, confidence, context, source_filing, "
-            f"related_tickers, metadata "
-            f"FROM signals WHERE {where} "
+            f"SELECT {_COLUMNS} FROM signals WHERE {where} "
             f"ORDER BY timestamp DESC LIMIT ?"
         )
         params.append(limit)
@@ -223,6 +289,171 @@ class SignalStore:
             )
             for row in result
         ]
+
+    def to_arrow(
+        self,
+        *,
+        ticker: str | None = None,
+        signal_type: str | None = None,
+        direction: str | None = None,
+        min_strength: float | None = None,
+        min_confidence: float | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+    ) -> pa.Table:
+        """Return matching signals as a :class:`pyarrow.Table`, newest first.
+
+        Takes the same filters as :meth:`query`; ``limit=None`` (the
+        default) returns every match.  The schema matches the Parquet
+        export (:meth:`SignalCollection.to_parquet`): ``timestamp`` is
+        UTC-aware and ``related_tickers`` / ``metadata`` are JSON strings.
+        No :class:`Signal` objects are built, so this is the fast path for
+        analytics over large stores.
+        """
+        where, params = _where_clause(
+            ticker=ticker,
+            signal_type=signal_type,
+            direction=direction,
+            min_strength=min_strength,
+            min_confidence=min_confidence,
+            start=start,
+            end=end,
+        )
+        sql = f"SELECT {_COLUMNS} FROM signals WHERE {where} ORDER BY timestamp DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        try:
+            result = self._conn.execute(sql, params).arrow()
+        except duckdb.Error as exc:
+            raise StorageError(f"Query failed: {exc}") from exc
+        # DuckDB >= 1.4 returns a RecordBatchReader, older versions a Table.
+        table = (
+            result.read_all() if isinstance(result, pa.RecordBatchReader) else result
+        )
+        # Stored timestamps are naive UTC; label them as such.
+        return table.cast(_ARROW_SCHEMA)
+
+    def to_pandas(self, **filters: Any) -> Any:
+        """Return matching signals as a :class:`pandas.DataFrame`.
+
+        Accepts the same keyword filters as :meth:`to_arrow`.  pandas is an
+        optional dependency: ``pip install "alphasig[pandas]"``.
+
+        Raises:
+            ImportError: If pandas is not installed.
+        """
+        if importlib.util.find_spec("pandas") is None:
+            raise ImportError(
+                "SignalStore.to_pandas() needs pandas: pip install "
+                "'alphasig[pandas]' (or use to_arrow(), which needs only pyarrow)."
+            )
+        return self.to_arrow(**filters).to_pandas()
+
+    def completed_extractions(self) -> dict[tuple[str, str], ExtractionRecord]:
+        """Return the finished extraction jobs keyed by ``(accession, engine)``."""
+        try:
+            rows = self._conn.execute(
+                "SELECT accession, engine, ticker, signal_count, "
+                "previous_accession, calibrated FROM extraction_log"
+            ).fetchall()
+        except duckdb.Error as exc:
+            raise StorageError(f"Query failed: {exc}") from exc
+        return {
+            (str(row[0]), str(row[1])): ExtractionRecord(
+                accession=str(row[0]),
+                engine=str(row[1]),
+                ticker=str(row[2] or ""),
+                signal_count=int(row[3] or 0),
+                previous_accession=row[4],
+                calibrated=bool(row[5]),
+            )
+            for row in rows
+        }
+
+    def record_extraction(
+        self,
+        signals: Sequence[Signal],
+        jobs: Sequence[ExtractionRecord],
+        *,
+        replace: Sequence[tuple[str, str]] = (),
+    ) -> int:
+        """Atomically store *signals* and mark *jobs* complete.
+
+        Either everything is written or nothing is, so an interrupted run
+        never leaves a job's signals without its log row (or the reverse).
+
+        Args:
+            signals: Signals the jobs produced.
+            jobs: Every job that finished, including jobs with no signals.
+                A job already in the log is overwritten.
+            replace: ``(accession, signal_type)`` pairs whose previously
+                stored signals are deleted first, for jobs that are being
+                re-run (matched on the ``_filing_accession`` metadata the
+                pipeline stamps on every signal).
+
+        Returns:
+            Number of new signals inserted.
+        """
+        try:
+            self._conn.begin()
+            try:
+                if replace:
+                    self._delete_job_signals(replace)
+                inserted = self.insert(signals)
+                if jobs:
+                    self._write_log(jobs)
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+        except duckdb.Error as exc:
+            raise StorageError(f"Failed to record extraction: {exc}") from exc
+        return inserted
+
+    def _delete_job_signals(self, replace: Sequence[tuple[str, str]]) -> None:
+        staged = pa.table(
+            {
+                "accession": [acc for acc, _ in replace],
+                "signal_type": [stype for _, stype in replace],
+            }
+        )
+        self._conn.register("_alphasig_replace", staged)
+        try:
+            self._conn.execute(
+                "DELETE FROM signals AS s WHERE EXISTS ("
+                "SELECT 1 FROM _alphasig_replace AS r "
+                "WHERE r.signal_type = s.signal_type AND r.accession = "
+                "json_extract_string(s.metadata, '$._filing_accession'))"
+            )
+        finally:
+            self._conn.unregister("_alphasig_replace")
+
+    def _write_log(self, jobs: Sequence[ExtractionRecord]) -> None:
+        staged = pa.table(
+            {
+                "accession": [j.accession for j in jobs],
+                "engine": [j.engine for j in jobs],
+                "ticker": [j.ticker for j in jobs],
+                "previous_accession": pa.array(
+                    [j.previous_accession for j in jobs], pa.string()
+                ),
+                "calibrated": pa.array([j.calibrated for j in jobs], pa.bool_()),
+                "signal_count": pa.array([j.signal_count for j in jobs], pa.int32()),
+            }
+        )
+        self._conn.register("_alphasig_log", staged)
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO extraction_log "
+                "(accession, engine, ticker, previous_accession, calibrated, "
+                "signal_count, completed_at) "
+                "SELECT accession, engine, ticker, previous_accession, calibrated, "
+                "signal_count, current_timestamp FROM _alphasig_log"
+            )
+        finally:
+            self._conn.unregister("_alphasig_log")
 
     @staticmethod
     def _to_storage_timestamp(timestamp: datetime) -> datetime:
