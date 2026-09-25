@@ -953,3 +953,45 @@ class TestEngineRegressions:
         await RiskDifferEngine().extract(current, mock_llm, previous_sections=previous)
         user_msg = mock_llm.extract_json.call_args.args[1]  # type: ignore[attr-defined]
         assert user_msg.count(tail) == 2
+
+
+class TestSimilarityFastPath:
+    def test_identical_words_short_circuit_to_difflib_result(self) -> None:
+        import difflib
+
+        text = "We may face   supply chain risk.\nTSMC is a supplier. " * 50
+        words = text.split()
+        expected = difflib.SequenceMatcher(None, words, words, autojunk=False).ratio()
+        assert compute_text_similarity(text, " ".join(words)) == expected == 1.0
+
+    async def test_similarity_runs_off_the_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        from datetime import date
+
+        from alphasig.engines import risk_differ
+
+        seen: list[bool] = []
+        real = risk_differ.compute_text_similarity
+
+        def spy(a: str, b: str) -> float:
+            seen.append(threading.current_thread() is threading.main_thread())
+            return real(a, b)
+
+        monkeypatch.setattr(risk_differ, "compute_text_similarity", spy)
+        section = FilingSection(
+            filing_accession="acc",
+            ticker="AAPL",
+            section_name="Risk Factors",
+            section_key="risk_factors",
+            text="Supply risk may rise. " * 20,
+            filing_type=FilingType.TEN_K,
+            filed_date=date(2024, 11, 1),
+        )
+        llm = MagicMock()
+        signals = await RiskDifferEngine().extract(
+            [section], llm, previous_sections=[section]
+        )
+        assert signals == []
+        assert seen == [False]

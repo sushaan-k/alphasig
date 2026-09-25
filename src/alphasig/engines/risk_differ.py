@@ -10,6 +10,7 @@ demonstrated that 10-K language changes strongly predict future returns.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 from collections.abc import Sequence
 from typing import Any
@@ -85,10 +86,14 @@ def compute_text_similarity(text_a: str, text_b: str) -> float:
     sections, and ``autojunk`` is disabled because its popularity heuristic
     discards the most common tokens of long inputs and badly understates
     the similarity of lightly edited text.
+
+    Identical word sequences short-circuit to 1.0 (what ``ratio()`` returns
+    for them) without the matcher's superlinear walk.
     """
-    return difflib.SequenceMatcher(
-        None, text_a.split(), text_b.split(), autojunk=False
-    ).ratio()
+    words_a, words_b = text_a.split(), text_b.split()
+    if words_a == words_b:
+        return 1.0
+    return difflib.SequenceMatcher(None, words_a, words_b, autojunk=False).ratio()
 
 
 class RiskDifferEngine(BaseEngine):
@@ -139,8 +144,13 @@ class RiskDifferEngine(BaseEngine):
             )
             return []
 
-        # Quick similarity check -- skip LLM call if nearly identical
-        similarity = compute_text_similarity(current_rf.text, previous_rf.text)
+        # Quick similarity check -- skip LLM call if nearly identical.
+        # difflib is pure Python and takes ~0.1-1 s on full 10-K risk
+        # sections; run it in a worker thread so the event loop keeps
+        # serving other filings' EDGAR and LLM I/O meanwhile.
+        similarity = await asyncio.to_thread(
+            compute_text_similarity, current_rf.text, previous_rf.text
+        )
         if similarity > 0.98:
             logger.info(
                 "risk_differ_no_material_change",
