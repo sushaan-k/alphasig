@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from alphasig.models import Signal, SignalDirection
+from alphasig.models import Signal, SignalDirection, as_utc, decayed_strength
 from alphasig.sectors import Sector, classify_sector
 
 
@@ -194,12 +195,44 @@ class SectorExposureReport:
         return "\n".join(lines) + "\n"
 
 
+def _point_in_time(
+    signals: Iterable[Signal],
+    as_of: datetime | None,
+    half_life_days: float | None,
+) -> tuple[list[Signal], datetime | None, float | None]:
+    """Resolve ``as_of`` / decay settings and drop signals not yet public.
+
+    A signal whose timestamp is after ``as_of`` did not exist at that time;
+    scoring it would leak future information into a historical report.
+    """
+    if half_life_days is not None:
+        if half_life_days <= 0:
+            raise ValueError("half_life_days must be positive")
+        if as_of is None:
+            as_of = datetime.now(UTC)
+    decay_rate = math.log(2) / half_life_days if half_life_days else None
+    if as_of is None:
+        return list(signals), None, decay_rate
+    as_of = as_utc(as_of)
+    return [s for s in signals if s.timestamp <= as_of], as_of, decay_rate
+
+
+def _effective_strength(
+    signal: Signal, as_of: datetime | None, decay_rate: float | None
+) -> float:
+    if as_of is None:
+        return signal.strength
+    rate = signal.decay_rate if decay_rate is None else decay_rate
+    return decayed_strength(signal.strength, rate, signal.timestamp, as_of)
+
+
 def rank_signals(
     signals: Iterable[Signal],
     *,
     as_of: datetime | None = None,
     limit: int | None = None,
     top_contexts: int = 3,
+    half_life_days: float | None = None,
 ) -> SignalRankingReport:
     """Rank tickers by confidence-weighted directional signal strength.
 
@@ -207,8 +240,17 @@ def rank_signals(
     neutral signals add to gross exposure but not net direction.  Scores are
     averaged per ticker so a ticker with many weak duplicate signals does not
     automatically outrank a ticker with fewer, stronger signals.
+
+    Args:
+        signals: Signals to score.
+        as_of: Evaluate the report at this time: signals published later are
+            excluded and each signal's strength is decayed to this time.
+        limit: Keep only the top *limit* tickers.
+        top_contexts: Number of explanations to keep per ticker.
+        half_life_days: Decay every signal with this half-life instead of
+            its own ``decay_rate``.  Implies ``as_of=now`` when not given.
     """
-    signal_list = list(signals)
+    signal_list, as_of, decay_rate = _point_in_time(signals, as_of, half_life_days)
     grouped: dict[str, list[Signal]] = {}
     for signal in signal_list:
         grouped.setdefault(signal.ticker.upper(), []).append(signal)
@@ -218,6 +260,7 @@ def rank_signals(
             ticker=ticker,
             signals=ticker_signals,
             as_of=as_of,
+            decay_rate=decay_rate,
             top_contexts=top_contexts,
         )
         for ticker, ticker_signals in grouped.items()
@@ -249,6 +292,7 @@ def summarize_sector_exposure(
     limit: int | None = None,
     include_unknown: bool = True,
     top_tickers: int = 3,
+    half_life_days: float | None = None,
 ) -> SectorExposureReport:
     """Summarize confidence-weighted directional exposure by sector.
 
@@ -256,9 +300,10 @@ def summarize_sector_exposure(
     add positive exposure, bearish signals add negative exposure, and neutral
     signals contribute to gross exposure. Scores are averaged per signal inside
     each sector, keeping broad sectors with many duplicate signals from
-    dominating the report solely by count.
+    dominating the report solely by count.  ``as_of`` and ``half_life_days``
+    behave as in :func:`rank_signals`.
     """
-    signal_list = list(signals)
+    signal_list, as_of, decay_rate = _point_in_time(signals, as_of, half_life_days)
     grouped: dict[Sector, list[Signal]] = {}
     for signal in signal_list:
         sector = classify_sector(signal.ticker)
@@ -271,6 +316,7 @@ def summarize_sector_exposure(
             sector=sector,
             signals=sector_signals,
             as_of=as_of,
+            decay_rate=decay_rate,
             top_tickers=top_tickers,
         )
         for sector, sector_signals in grouped.items()
@@ -300,6 +346,7 @@ def _score_ticker(
     ticker: str,
     signals: list[Signal],
     as_of: datetime | None,
+    decay_rate: float | None,
     top_contexts: int,
 ) -> TickerScore:
     components: list[float] = []
@@ -321,9 +368,7 @@ def _score_ticker(
         else:
             neutral += 1
 
-        effective_strength = (
-            signal.current_strength(as_of=as_of) if as_of else signal.strength
-        )
+        effective_strength = _effective_strength(signal, as_of, decay_rate)
         weighted = effective_strength * signal.confidence
         components.append(direction_weight * weighted)
         gross_components.append(weighted)
@@ -356,6 +401,7 @@ def _score_sector(
     sector: Sector,
     signals: list[Signal],
     as_of: datetime | None,
+    decay_rate: float | None,
     top_tickers: int,
 ) -> SectorScore:
     components: list[float] = []
@@ -376,9 +422,7 @@ def _score_sector(
         else:
             neutral += 1
 
-        effective_strength = (
-            signal.current_strength(as_of=as_of) if as_of else signal.strength
-        )
+        effective_strength = _effective_strength(signal, as_of, decay_rate)
         weighted = effective_strength * signal.confidence
         signed_weighted = direction_weight * weighted
         components.append(signed_weighted)

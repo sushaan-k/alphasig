@@ -155,3 +155,49 @@ class TestSignalStore:
         )
         assert len(results) == 1
         assert results[0].signal_type == SignalType.RISK_CHANGE
+
+
+def _sig(i: int, **overrides: object) -> Signal:
+    fields: dict[str, object] = {
+        "timestamp": datetime(2024, 11, 1, 22, 4, tzinfo=UTC),
+        "ticker": "AAPL",
+        "signal_type": SignalType.RISK_CHANGE,
+        "direction": SignalDirection.BEARISH,
+        "strength": 0.5,
+        "confidence": 0.8,
+        "context": f"risk {i}",
+        "source_filing": "https://www.sec.gov/Archives/x.htm",
+    }
+    fields.update(overrides)
+    return Signal(**fields)  # type: ignore[arg-type]
+
+
+class TestSignalStoreRegressions:
+    def test_reinserting_same_signals_is_idempotent(self) -> None:
+        with SignalStore(":memory:") as store:
+            batch = [_sig(1), _sig(2)]
+            assert store.insert(batch) == 2
+            assert store.insert([*batch, _sig(3), _sig(3)]) == 1
+            assert store.count() == 3
+
+    def test_empty_insert(self) -> None:
+        with SignalStore(":memory:") as store:
+            assert store.insert([]) == 0
+
+    def test_aware_bounds_do_not_depend_on_session_timezone(self) -> None:
+        from datetime import timedelta, timezone
+
+        with SignalStore(":memory:") as store:
+            store._conn.execute("SET TimeZone = 'America/New_York'")
+            store.insert([_sig(1)])
+            # Same instant as the stored signal, expressed at UTC-5.
+            bound = datetime(2024, 11, 1, 17, 4, tzinfo=timezone(timedelta(hours=-5)))
+            assert len(store.query(start=bound)) == 1
+            assert len(store.query(end=bound)) == 1
+            assert store.query(start=bound + timedelta(seconds=1)) == []
+
+    def test_round_trip_preserves_utc_instant(self) -> None:
+        with SignalStore(":memory:") as store:
+            store.insert([_sig(1)])
+            (out,) = store.query()
+            assert out.timestamp == datetime(2024, 11, 1, 22, 4, tzinfo=UTC)

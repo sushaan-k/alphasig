@@ -13,6 +13,7 @@ from alphasig.engines.tone import ToneEngine, classify_tone_shift
 from alphasig.llm import LLMClient
 from alphasig.models import (
     FilingSection,
+    FilingType,
     SignalDirection,
     SignalType,
     ToneLabel,
@@ -811,3 +812,144 @@ class TestToneEngine:
 
     def test_engine_name(self) -> None:
         assert ToneEngine().name == "tone"
+
+
+# -- Regression tests ----------------------------------------------------------
+
+
+def _section(
+    key: str, text: str, accession: str = "0001", day: int = 1
+) -> FilingSection:
+    from datetime import date
+
+    return FilingSection(
+        filing_accession=accession,
+        ticker="AAPL",
+        section_name=key,
+        section_key=key,
+        text=text,
+        filing_type=FilingType.TEN_K,
+        filed_date=date(2024, 11, day),
+    )
+
+
+class TestEngineRegressions:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("engine", "reply"),
+        [
+            (
+                SupplyChainEngine(),
+                [{"target": "TSM", "relation": "depends_on", "confidence": 0.9}],
+            ),
+            (
+                MandAEngine(),
+                [{"category": "strategic_alternatives", "confidence": 0.9}],
+            ),
+            (ToneEngine(), [{"topic": "margins", "tone": "pessimistic_warning"}]),
+        ],
+    )
+    async def test_signals_are_timestamped_when_public_not_at_midnight(
+        self,
+        mock_llm: LLMClient,
+        sample_sections: list[FilingSection],
+        engine: object,
+        reply: list[dict[str, object]],
+    ) -> None:
+        mock_llm.extract_json.return_value = reply  # type: ignore[attr-defined]
+        signals = await engine.extract(sample_sections, mock_llm)  # type: ignore[attr-defined]
+        assert signals
+        for sig in signals:
+            assert sig.timestamp == sample_sections[0].available_at
+            assert sig.timestamp.hour != 0  # midnight UTC precedes the release
+
+    @pytest.mark.asyncio
+    async def test_engines_send_no_sampling_parameters(
+        self, mock_llm: LLMClient, sample_sections: list[FilingSection]
+    ) -> None:
+        mock_llm.extract_json.return_value = []  # type: ignore[attr-defined]
+        for engine in (SupplyChainEngine(), MandAEngine(), ToneEngine()):
+            await engine.extract(sample_sections, mock_llm)
+        for call in mock_llm.extract_json.call_args_list:  # type: ignore[attr-defined]
+            assert "temperature" not in call.kwargs
+
+    @pytest.mark.asyncio
+    async def test_malformed_items_are_skipped_not_fatal(
+        self, mock_llm: LLMClient, sample_sections: list[FilingSection]
+    ) -> None:
+        mock_llm.extract_json.return_value = [  # type: ignore[attr-defined]
+            "not an object",
+            {"target": "", "relation": "depends_on"},
+            {"target": "AAPL", "relation": "depends_on"},  # self-loop
+            {"target": "TSM", "relation": "depends_on", "confidence": "high"},
+            {"topic": "margins", "tone": "pessimistic_warning", "confidence": 7},
+            {"target": "Foxconn", "relation": "depends_on", "confidence": 0.8},
+        ]
+        edges = await SupplyChainEngine().extract(sample_sections, mock_llm)
+        assert [s.metadata["target"] for s in edges] == ["Foxconn"]
+        assert await ToneEngine().extract(sample_sections, mock_llm) == []
+        assert await MandAEngine().extract(sample_sections, mock_llm) is not None
+
+    @pytest.mark.asyncio
+    async def test_supply_chain_captures_stated_exposure(
+        self, mock_llm: LLMClient, sample_sections: list[FilingSection]
+    ) -> None:
+        mock_llm.extract_json.return_value = [  # type: ignore[attr-defined]
+            {"target": "WMT", "relation": "supplies_to", "exposure": 0.22},
+            {"target": "TGT", "relation": "supplies_to", "exposure": "18"},
+            {"target": "TSM", "relation": "depends_on", "exposure": None},
+            {"target": "XYZ", "relation": "depends_on", "exposure": 250},
+        ]
+        signals = await SupplyChainEngine().extract(sample_sections, mock_llm)
+        exposure = {s.metadata["target"]: s.metadata["exposure"] for s in signals}
+        assert exposure == {"WMT": 0.22, "TGT": 0.18, "TSM": None, "XYZ": None}
+
+        from alphasig import SignalCollection
+
+        graph = SignalCollection(signals).supply_chain_graph()
+        assert graph.customers_of("WMT")[0]["exposure"] == 0.22
+
+    @pytest.mark.asyncio
+    async def test_tone_classifies_each_mda_once_across_a_series(
+        self, mock_llm: LLMClient
+    ) -> None:
+        mock_llm.extract_json.return_value = [  # type: ignore[attr-defined]
+            {"topic": "margins", "tone": "neutral_factual", "confidence": 0.9}
+        ]
+        q1 = [_section("md_and_a", "Q1 margins text", "0001", 1)]
+        q2 = [_section("md_and_a", "Q2 margins text", "0002", 2)]
+        q3 = [_section("md_and_a", "Q3 margins text", "0003", 3)]
+        engine = ToneEngine()
+        import asyncio
+
+        await asyncio.gather(
+            engine.extract(q1, mock_llm),
+            engine.extract(q2, mock_llm, previous_sections=q1),
+            engine.extract(q3, mock_llm, previous_sections=q2),
+        )
+        assert mock_llm.extract_json.await_count == 3  # type: ignore[attr-defined]
+
+    def test_similarity_is_not_understated_for_long_edited_text(self) -> None:
+        import random
+
+        rng = random.Random(0)
+        words = [f"w{i}" for i in range(2000)] + ["the", "of", "and", "may"] * 40
+
+        def para() -> str:
+            return " ".join(rng.choice(words) for _ in range(80))
+
+        prev = [para() for _ in range(100)]
+        cur = list(prev)
+        cur.insert(50, para())
+        # One inserted paragraph in ~8k words is a ~1% change.
+        assert compute_text_similarity(" ".join(cur), " ".join(prev)) > 0.98
+
+    @pytest.mark.asyncio
+    async def test_risk_differ_sends_full_sections(self, mock_llm: LLMClient) -> None:
+        mock_llm.extract_json.return_value = []  # type: ignore[attr-defined]
+        tail = "TAIL-RISK-MARKER"
+        current = [_section("risk_factors", "a " * 30_000 + tail, "0002", 2)]
+        previous = [_section("risk_factors", "b " * 30_000 + tail, "0001", 1)]
+        await RiskDifferEngine().extract(current, mock_llm, previous_sections=previous)
+        user_msg = mock_llm.extract_json.call_args.args[1]  # type: ignore[attr-defined]
+        assert user_msg.count(tail) == 2

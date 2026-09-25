@@ -18,9 +18,13 @@ class EdgarError(AlphasigError):
 class EdgarRateLimitError(EdgarError):
     """Raised when EDGAR rate-limits our requests (HTTP 429)."""
 
+    retry_after: float | None = None
+
 
 class EdgarTransientError(EdgarError):
     """Raised on transient network errors (timeouts, 5xx) that should be retried."""
+
+    retry_after: float | None = None
 
 
 class EdgarNotFoundError(EdgarError):

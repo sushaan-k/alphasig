@@ -59,6 +59,7 @@ class SupplyChainGraph:
                 relation=edge.relation.value,
                 context=edge.context,
                 confidence=edge.confidence,
+                exposure=edge.exposure,
                 filing_type=edge.filing_type.value,
                 filed_date=edge.filed_date.isoformat(),
             )
@@ -83,7 +84,8 @@ class SupplyChainGraph:
 
         Returns:
             List of dicts with ``target``, ``relation``, ``context``,
-            ``confidence``.
+            ``confidence`` and ``exposure`` (stated concentration share,
+            or ``None``).
         """
         results: list[dict[str, Any]] = []
         for _, target, _, data in self._graph.out_edges(ticker, keys=True, data=True):
@@ -219,8 +221,9 @@ class SupplyChainGraph:
             self._graph, pos, font_size=8, font_weight="bold", ax=ax
         )
 
-        # Colour edges by relation type
+        # Colour edges by relation type; width encodes stated exposure
         edge_colors = []
+        edge_widths = []
         for _, _, data in self._graph.edges(data=True):
             relation = data.get("relation", "depends_on")
             if relation == "depends_on":
@@ -229,11 +232,13 @@ class SupplyChainGraph:
                 edge_colors.append("#2ECC71")
             else:
                 edge_colors.append("#95A5A6")
+            edge_widths.append(1.0 + 6.0 * (data.get("exposure") or 0.0))
 
         nx.draw_networkx_edges(
             self._graph,
             pos,
             edge_color=edge_colors,
+            width=edge_widths,
             arrows=True,
             arrowsize=15,
             alpha=0.6,

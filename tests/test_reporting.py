@@ -212,3 +212,31 @@ def test_sector_report_serializes_to_json_and_markdown() -> None:
     assert data["sector_count"] == 1
     assert data["sectors"][0]["sector"] == "technology"
     assert "| 1 | technology | bullish |" in markdown
+
+
+def test_as_of_excludes_signals_published_later() -> None:
+    early = datetime(2024, 1, 1, tzinfo=UTC)
+    late = datetime(2024, 6, 1, tzinfo=UTC)
+    signals = [
+        _signal("AAPL", SignalDirection.BEARISH, 0.9, 0.9, timestamp=early),
+        _signal("MSFT", SignalDirection.BULLISH, 0.9, 0.9, timestamp=late),
+    ]
+    report = rank_signals(signals, as_of=datetime(2024, 3, 1))  # naive = UTC
+    assert [t.ticker for t in report.tickers] == ["AAPL"]
+    assert report.total_signals == 1
+    sectors = summarize_sector_exposure(signals, as_of=datetime(2024, 3, 1, tzinfo=UTC))
+    assert sectors.total_signals == 1
+
+
+def test_half_life_decays_signals_without_their_own_rate() -> None:
+    ts = datetime(2024, 1, 1, tzinfo=UTC)
+    signal = _signal("AAPL", SignalDirection.BEARISH, 0.8, 1.0, timestamp=ts)
+    report = rank_signals([signal], as_of=ts + timedelta(days=30), half_life_days=30)
+    assert report.tickers[0].avg_strength == 0.4
+
+
+def test_half_life_must_be_positive() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        rank_signals([], half_life_days=0)

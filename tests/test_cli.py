@@ -481,3 +481,64 @@ class TestPrintSignalTable:
         coll = SignalCollection(signals)
         # Should not raise on any direction
         _print_signal_table(coll)
+
+
+class TestCliRegressions:
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--tickers", "AAPL", "MSFT"],  # the README form
+            ["--tickers", "aapl,msft"],
+            ["AAPL", "-t", "MSFT"],
+        ],
+    )
+    @patch("alphasig.pipeline.Pipeline")
+    def test_ticker_forms(
+        self,
+        mock_pipeline_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+        args: list[str],
+    ) -> None:
+        mock_pipeline_cls.return_value.extract = AsyncMock(
+            return_value=SignalCollection(mock_signals)
+        )
+        result = runner.invoke(main, ["extract", *args])
+        assert result.exit_code == 0, result.output
+        tickers = mock_pipeline_cls.return_value.extract.call_args.kwargs["tickers"]
+        assert sorted(tickers) == ["AAPL", "MSFT"]
+
+    def test_unknown_engine_is_a_usage_error(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["extract", "AAPL", "-e", "sentiment"])
+        assert result.exit_code == 2
+        assert "sentiment" in result.output
+
+    def test_missing_user_agent_is_a_clean_error(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.delenv("ALPHASIG_USER_AGENT", raising=False)
+        result = runner.invoke(main, ["extract", "AAPL", "--db", ":memory:"])
+        assert result.exit_code == 1
+        assert "User-Agent" in result.output
+        assert "Traceback" not in result.output
+
+    @patch("alphasig.storage.SignalStore")
+    def test_rank_half_life(
+        self, mock_store_cls: MagicMock, runner: CliRunner, mock_signals: list[Signal]
+    ) -> None:
+        mock_store_cls.return_value.query.return_value = mock_signals
+        result = runner.invoke(
+            main,
+            [
+                "rank",
+                "--as-of",
+                "2024-12-01T00:00:00Z",
+                "--half-life",
+                "30",
+                "--format",
+                "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert '"as_of": "2024-12-01T00:00:00+00:00"' in result.output

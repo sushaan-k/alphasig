@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
 
@@ -431,3 +432,63 @@ class TestAPIServer:
         assert resp.status_code == 200
         data = resp.json()
         assert all(s["confidence"] >= 0.9 for s in data)
+
+
+class TestWebhookRegressions:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_client_errors_are_not_retried(
+        self, webhook_signals: list[Signal]
+    ) -> None:
+        route = respx.post("https://hooks.example.com/test").respond(404)
+        sender = WebhookSender("https://hooks.example.com/test")
+        assert await sender.send_batch(webhook_signals) == 0
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_server_errors_are_retried(
+        self, webhook_signals: list[Signal]
+    ) -> None:
+        route = respx.post("https://hooks.example.com/test").mock(
+            side_effect=[httpx.Response(503), httpx.Response(200)]
+        )
+        sender = WebhookSender("https://hooks.example.com/test")
+        assert await sender.send_batch(webhook_signals) == 1
+        assert route.call_count == 2
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_secret_url_is_not_logged(
+        self, webhook_signals: list[Signal]
+    ) -> None:
+        from structlog.testing import capture_logs
+
+        url = "https://hooks.slack.com/services/T000/B000/SECRETTOKEN"
+        respx.post(url).respond(500)
+        with capture_logs() as logs:
+            await WebhookSender(url).send(webhook_signals)
+        rendered = repr(logs)
+        assert "SECRETTOKEN" not in rendered
+        assert "hooks.slack.com" in rendered
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_one_connection_pool_per_send(
+        self, webhook_signals: list[Signal], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        respx.post("https://hooks.example.com/test").respond(200)
+        created = 0
+        real_init = httpx.AsyncClient.__init__
+
+        def counting_init(self: httpx.AsyncClient, *args: object, **kw: object) -> None:
+            nonlocal created
+            created += 1
+            real_init(self, *args, **kw)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(httpx.AsyncClient, "__init__", counting_init)
+        sent = await WebhookSender("https://hooks.example.com/test").send(
+            webhook_signals
+        )
+        assert sent > 1
+        assert created == 1

@@ -1,17 +1,62 @@
 """Pydantic data models used throughout the alphasig pipeline.
 
-Every model is immutable (``frozen=True``) so instances are hashable and
-safe to share across async tasks.
+Every model is immutable (``frozen=True``) so instances are safe to share
+across async tasks.
 """
 
 from __future__ import annotations
 
 import enum
 import math
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator
+
+_EASTERN = ZoneInfo("America/New_York")
+# EDGAR assigns filings accepted after 17:30 ET the next business day's
+# filing date, so a filing dated D is always public by D 17:30 ET.
+_EDGAR_FILING_CUTOFF = time(17, 30)
+
+
+def as_utc(value: datetime) -> datetime:
+    """Return *value* as an aware UTC datetime (naive input is taken as UTC)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def public_availability(filed_date: date, accepted_at: datetime | None) -> datetime:
+    """Return the earliest UTC time a filing is known to be public.
+
+    Uses the EDGAR acceptance timestamp when available.  Otherwise falls
+    back to the filing-date cutoff (17:30 ET), which never precedes the real
+    release, so backtests keyed on this timestamp cannot trade on a filing
+    before it was published.
+    """
+    if accepted_at is not None:
+        return accepted_at.astimezone(UTC)
+    return datetime.combine(
+        filed_date, _EDGAR_FILING_CUTOFF, tzinfo=_EASTERN
+    ).astimezone(UTC)
+
+
+def decayed_strength(
+    strength: float, decay_rate: float, timestamp: datetime, as_of: datetime
+) -> float:
+    """Exponentially decay *strength* from *timestamp* to *as_of*.
+
+    ``decay_rate`` is per day; the result is clamped to ``[0, 1]`` and never
+    exceeds *strength* (no decay is applied before *timestamp*).
+    """
+    if decay_rate == 0.0:
+        return strength
+    days_elapsed = (as_utc(as_of) - as_utc(timestamp)).total_seconds() / 86_400.0
+    if days_elapsed <= 0:
+        return strength
+    return max(0.0, min(1.0, strength * math.exp(-decay_rate * days_elapsed)))
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -99,7 +144,15 @@ class Filing(BaseModel, frozen=True):
     filed_date: date
     period_of_report: date
     url: str = Field(..., description="EDGAR filing URL")
+    accepted_at: datetime | None = Field(
+        default=None, description="EDGAR acceptance time (timezone-aware)"
+    )
     raw_html: str = Field(default="", repr=False)
+
+    @property
+    def available_at(self) -> datetime:
+        """UTC time at which the filing became public (see :func:`public_availability`)."""
+        return public_availability(self.filed_date, self.accepted_at)
 
 
 class FilingSection(BaseModel, frozen=True):
@@ -114,6 +167,12 @@ class FilingSection(BaseModel, frozen=True):
     text: str = Field(..., repr=False)
     filing_type: FilingType
     filed_date: date
+    accepted_at: datetime | None = None
+
+    @property
+    def available_at(self) -> datetime:
+        """UTC time at which the parent filing became public."""
+        return public_availability(self.filed_date, self.accepted_at)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +187,12 @@ class Signal(BaseModel, frozen=True):
     consumers only need a single schema.
     """
 
-    timestamp: datetime = Field(description="Filing date as UTC datetime")
+    timestamp: datetime = Field(
+        description=(
+            "UTC time the source filing became public (EDGAR acceptance time). "
+            "Naive datetimes are interpreted as UTC."
+        )
+    )
     ticker: str
     signal_type: SignalType
     direction: SignalDirection
@@ -148,10 +212,10 @@ class Signal(BaseModel, frozen=True):
         ),
     )
 
-    @field_validator("strength", "confidence")
+    @field_validator("timestamp")
     @classmethod
-    def _clamp_unit(cls, v: float) -> float:
-        return max(0.0, min(1.0, v))
+    def _to_utc(cls, v: datetime) -> datetime:
+        return as_utc(v)
 
     def current_strength(self, *, as_of: datetime) -> float:
         """Compute decayed signal strength at a given point in time.
@@ -161,21 +225,13 @@ class Signal(BaseModel, frozen=True):
         returned (signals cannot grow stronger retroactively).
 
         Args:
-            as_of: The datetime at which to evaluate the signal.
+            as_of: The datetime at which to evaluate the signal (naive
+                datetimes are interpreted as UTC).
 
         Returns:
             The decayed strength, clamped to ``[0.0, 1.0]``.
         """
-        if self.decay_rate == 0.0:
-            return self.strength
-
-        delta = as_of - self.timestamp
-        days_elapsed = delta.total_seconds() / 86_400.0
-        if days_elapsed <= 0:
-            return self.strength
-
-        decayed = self.strength * math.exp(-self.decay_rate * days_elapsed)
-        return max(0.0, min(1.0, decayed))
+        return decayed_strength(self.strength, self.decay_rate, self.timestamp, as_of)
 
     @field_validator("related_tickers")
     @classmethod
@@ -203,6 +259,15 @@ class SupplyChainEdge(BaseModel, frozen=True):
     relation: RelationType
     context: str = Field(description="What the relationship concerns")
     confidence: float = Field(ge=0.0, le=1.0)
+    exposure: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Concentration share stated in the filing (e.g. 0.22 for "
+            "'22% of net sales'); None when the filing gives no figure"
+        ),
+    )
     filing_type: FilingType
     filed_date: date
 

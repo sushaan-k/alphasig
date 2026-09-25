@@ -8,10 +8,11 @@ parsing, extraction engines, and signal compilation into a single
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 
 import structlog
 
@@ -21,8 +22,13 @@ from alphasig.engines.m_and_a import MandAEngine
 from alphasig.engines.risk_differ import RiskDifferEngine
 from alphasig.engines.supply_chain import SupplyChainEngine
 from alphasig.engines.tone import ToneEngine
-from alphasig.exceptions import ConfigurationError, ExtractionError, PipelineError
-from alphasig.llm import LLMClient
+from alphasig.exceptions import (
+    ConfigurationError,
+    ExtractionError,
+    PipelineError,
+    StorageError,
+)
+from alphasig.llm import DEFAULT_MODEL, LLMClient
 from alphasig.models import Filing, FilingSection, Signal
 from alphasig.parser import parse_filing
 from alphasig.signals import SignalCollection
@@ -45,31 +51,33 @@ class Pipeline:
     """Orchestrates the full alphasig extraction pipeline.
 
     Args:
-        model: LLM model identifier.
+        model: LLM model identifier (default :data:`alphasig.llm.DEFAULT_MODEL`).
         api_key: Anthropic API key (or read from env).
-        user_agent: EDGAR User-Agent string (name + email).
-        cache_dir: EDGAR cache directory.
+        user_agent: EDGAR User-Agent identifying you, ``"Name email@domain"``
+            (SEC fair-access policy).  Falls back to the
+            ``ALPHASIG_USER_AGENT`` environment variable.
+        cache_dir: EDGAR cache directory; ``None`` disables caching.
         db_path: DuckDB storage path; ``None`` disables persistence.
-        concurrency: Maximum concurrent engine tasks per filing.
-        max_concurrent: Maximum number of tickers to download and
-            process in parallel.  Uses :func:`asyncio.gather` with a
-            semaphore so EDGAR rate limits are respected.  Defaults to 3.
+        concurrency: Maximum concurrent filing downloads per ticker.  All
+            requests share one client limited to 10 requests/second.
+        max_concurrent: Maximum number of tickers to process in parallel.
+            Defaults to 3.
     """
 
     def __init__(
         self,
         *,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         api_key: str | None = None,
-        user_agent: str = "alphasig research bot research@example.com",
-        cache_dir: str = "./edgar_cache",
+        user_agent: str | None = None,
+        cache_dir: str | None = "./edgar_cache",
         db_path: str | None = "alphasig.duckdb",
         concurrency: int = 4,
         max_concurrent: int = 3,
     ) -> None:
         self._model = model
         self._api_key = api_key
-        self._user_agent = user_agent
+        self._user_agent = user_agent or os.environ.get("ALPHASIG_USER_AGENT", "")
         self._cache_dir = cache_dir
         self._db_path = db_path
         self._concurrency = concurrency
@@ -112,15 +120,24 @@ class Pipeline:
                 "ANTHROPIC_API_KEY environment variable is required "
                 "for signal extraction."
             )
+        if "@" not in self._user_agent:
+            raise ConfigurationError(
+                "SEC EDGAR requires a User-Agent identifying you, e.g. "
+                "'Jane Doe jane@example.com'. Pass user_agent= or set "
+                "ALPHASIG_USER_AGENT."
+            )
 
         concurrency_limit = max_concurrent or self._max_concurrent
         llm = LLMClient(api_key=self._api_key, model=self._model)
         collection = SignalCollection()
 
-        async with EdgarClient(
-            user_agent=self._user_agent,
-            cache_dir=self._cache_dir,
-        ) as edgar:
+        async with (
+            EdgarClient(
+                user_agent=self._user_agent,
+                cache_dir=self._cache_dir,
+            ) as edgar,
+            _closing(llm),
+        ):
             sem = asyncio.Semaphore(concurrency_limit)
 
             async def _process_with_limit(ticker: str) -> list[Signal]:
@@ -156,11 +173,12 @@ class Pipeline:
                     collection.extend(result)
 
         if store and self._db_path and len(collection) > 0:
+            # Extraction already spent the LLM budget: log a storage failure
+            # and still return the signals rather than discarding them.
             try:
-                signal_store = SignalStore(self._db_path)
-                signal_store.insert(list(collection))
-                signal_store.close()
-            except Exception as exc:
+                with SignalStore(self._db_path) as signal_store:
+                    signal_store.insert(list(collection))
+            except StorageError as exc:
                 logger.error("storage_failed", error=str(exc))
 
         logger.info(
@@ -212,7 +230,9 @@ class Pipeline:
                 continue
             filing: Filing = fetch_result
             try:
-                sections = parse_filing(filing)
+                # HTML parsing is CPU-bound; keep the event loop free for the
+                # other tickers' downloads and LLM calls.
+                sections = await asyncio.to_thread(parse_filing, filing)
                 parsed.append((filing, sections))
             except Exception as exc:
                 logger.warning(
@@ -229,58 +249,53 @@ class Pipeline:
         for filing, sections in parsed:
             by_type[filing.filing_type.value].append((filing, sections))
 
-        # Run engines across filings
-        all_signals: list[Signal] = []
-        for _ftype_key, filing_groups in by_type.items():
-            # Sort by date to get chronological order
+        # Pair each filing with its predecessor of the same form type.  The
+        # pairs only depend on parsed sections, so every filing's engines can
+        # run at once; the LLM client bounds the number of in-flight calls.
+        jobs: list[tuple[Filing, list[FilingSection], list[FilingSection] | None]] = []
+        for filing_groups in by_type.values():
             filing_groups.sort(key=lambda x: x[0].filed_date)
-
             for idx, (filing, sections) in enumerate(filing_groups):
-                previous_sections = filing_groups[idx - 1][1] if idx > 0 else None
+                previous = filing_groups[idx - 1][1] if idx > 0 else None
+                jobs.append((filing, sections, previous))
 
-                engine_tasks = []
-                for engine in engines:
-                    needs_prev = engine.name in _DIFF_ENGINES
-                    engine_tasks.append(
-                        _run_engine(
-                            engine=engine,
-                            sections=sections,
-                            llm=llm,
-                            previous_sections=(
-                                previous_sections if needs_prev else None
-                            ),
-                        )
+        results = await asyncio.gather(
+            *(
+                _run_engine(
+                    engine=engine,
+                    sections=sections,
+                    llm=llm,
+                    previous_sections=(
+                        previous if engine.name in _DIFF_ENGINES else None
+                    ),
+                )
+                for _, sections, previous in jobs
+                for engine in engines
+            ),
+            return_exceptions=True,
+        )
+
+        all_signals: list[Signal] = []
+        for job_idx, engine_result in enumerate(results):
+            if isinstance(engine_result, BaseException):
+                logger.warning("engine_failed", ticker=ticker, error=str(engine_result))
+                continue
+            filing = jobs[job_idx // len(engines)][0]
+            for sig in engine_result:
+                stamped_metadata = {
+                    **sig.metadata,
+                    "_filing_accession": filing.accession_number,
+                    "_filing_type": filing.filing_type.value,
+                    "_period_of_report": filing.period_of_report.isoformat(),
+                }
+                all_signals.append(
+                    sig.model_copy(
+                        update={
+                            "source_filing": filing.url,
+                            "metadata": stamped_metadata,
+                        }
                     )
-
-                engine_results: list[
-                    list[Signal] | BaseException
-                ] = await asyncio.gather(*engine_tasks, return_exceptions=True)
-
-                for engine_result in engine_results:
-                    if isinstance(engine_result, BaseException):
-                        logger.warning(
-                            "engine_failed",
-                            ticker=ticker,
-                            error=str(engine_result),
-                        )
-                    else:
-                        # Stamp each signal with the filing URL
-                        for sig in engine_result:
-                            stamped_metadata = dict(sig.metadata)
-                            stamped_metadata.update(
-                                {
-                                    "_filing_accession": filing.accession_number,
-                                    "_filing_type": filing.filing_type.value,
-                                    "_period_of_report": filing.period_of_report.isoformat(),
-                                }
-                            )
-                            stamped = sig.model_copy(
-                                update={
-                                    "source_filing": filing.url,
-                                    "metadata": stamped_metadata,
-                                }
-                            )
-                            all_signals.append(stamped)
+                )
 
         all_signals = _deduplicate_amendment_signals(all_signals)
 
@@ -297,12 +312,10 @@ def _deduplicate_amendment_signals(signals: list[Signal]) -> list[Signal]:
     """Remove duplicate signals caused by filing amendments.
 
     When the same signal (same ticker, signal_type, direction, and context)
-    appears in both the original filing (e.g. 10-K) and its amendment
-    (10-K/A), keep only the one from the most recently filed document.
-
-    This handles the common case where a company files a 10-K/A that
-    supersedes the original 10-K -- the amended version should be the
-    single source of truth.
+    appears in both an original filing (e.g. 10-K) and its amendment
+    (10-K/A), keep only the earliest one: that is when the information
+    became public, so keeping the later copy would date the signal after
+    the market could already act on it.
     """
     if not signals:
         return signals
@@ -319,7 +332,7 @@ def _deduplicate_amendment_signals(signals: list[Signal]) -> list[Signal]:
             _filing_family(sig),
         )
         existing = seen.get(key)
-        if existing is None or sig.timestamp > existing.timestamp:
+        if existing is None or sig.timestamp < existing.timestamp:
             seen[key] = sig
 
     deduped = list(seen.values())
@@ -362,6 +375,14 @@ def _base_filing_type(filing_type: str) -> str:
     if filing_type.endswith("-A"):
         return filing_type[:-2]
     return filing_type
+
+
+@contextlib.asynccontextmanager
+async def _closing(llm: LLMClient) -> AsyncIterator[LLMClient]:
+    try:
+        yield llm
+    finally:
+        await llm.aclose()
 
 
 async def _run_engine(

@@ -8,7 +8,7 @@ Quick start::
 
     from alphasig import Pipeline, SignalCollection
 
-    pipeline = Pipeline(model="claude-sonnet-4-6")
+    pipeline = Pipeline(user_agent="Jane Doe jane@example.com")
     signals = await pipeline.extract(
         tickers=["AAPL", "MSFT"],
         filing_types=["10-K", "10-Q"],

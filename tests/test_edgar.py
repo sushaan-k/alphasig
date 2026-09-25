@@ -372,3 +372,219 @@ class TestEdgarClient:
         cache = tmp_path / "sub" / "cache"
         EdgarClient(user_agent="Test test@example.com", cache_dir=str(cache))
         assert cache.exists()
+
+
+class TestEdgarFairAccessAndCorrectness:
+    """Regression tests for SEC fair-access and filing-metadata handling."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_spaces_concurrent_requests(self) -> None:
+        import asyncio
+        import itertools
+        import time
+
+        from alphasig.edgar import _RateLimiter
+
+        limiter = _RateLimiter(max_per_second=20)
+        stamps: list[float] = []
+
+        async def hit() -> None:
+            await limiter.acquire()
+            stamps.append(time.monotonic())
+
+        await asyncio.gather(*(hit() for _ in range(6)))
+        gaps = [b - a for a, b in itertools.pairwise(stamps)]
+        # No burst: every request waits for its own 50 ms slot.
+        assert min(gaps) >= 0.045
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_retry_after_header_is_honoured(
+        self, mock_company_tickers: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[float] = []
+
+        async def record_sleep(seconds: float) -> None:
+            waits.append(seconds)
+
+        monkeypatch.setattr(EdgarClient._get.retry, "sleep", record_sleep)
+        respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "7"}),
+                httpx.Response(200, json=mock_company_tickers),
+            ]
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            assert await client.resolve_cik("AAPL") == "0000320193"
+        assert waits == [7.0]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_403_is_not_retried_and_explains_policy(self) -> None:
+        from alphasig.exceptions import EdgarError
+
+        route = respx.get("https://www.sec.gov/files/company_tickers.json").respond(403)
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            with pytest.raises(EdgarError, match="User-Agent"):
+                await client.resolve_cik("AAPL")
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_concurrent_resolve_cik_downloads_ticker_map_once(
+        self, mock_company_tickers: dict
+    ) -> None:
+        import asyncio
+
+        route = respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json=mock_company_tickers
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            ciks = await asyncio.gather(
+                client.resolve_cik("AAPL"), client.resolve_cik("MSFT")
+            )
+        assert ciks == ["0000320193", "0000789019"]
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_acceptance_time_is_eastern_and_url_uses_unpadded_cik(
+        self, mock_company_tickers: dict, mock_submissions: dict
+    ) -> None:
+        from datetime import UTC, datetime
+
+        recent = mock_submissions["filings"]["recent"]
+        recent["acceptanceDateTime"] = [
+            "2024-11-01T18:04:43.000Z",
+            "2024-05-02T18:03:07.000Z",
+            "2023-11-02T18:08:27.000Z",
+        ]
+        respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json=mock_company_tickers
+        )
+        respx.get("https://data.sec.gov/submissions/CIK0000320193.json").respond(
+            json=mock_submissions
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            filings = await client.get_filings("AAPL", lookback_years=5)
+        latest = filings[-1]
+        # EDGAR's "Z" suffix is misleading: 18:04 is Eastern (EDT on Nov 1).
+        assert latest.available_at == datetime(2024, 11, 1, 22, 4, 43, tzinfo=UTC)
+        assert latest.url == (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000032019324000123/aapl-20240928.htm"
+        )
+
+    def test_available_at_without_acceptance_uses_filing_cutoff(self) -> None:
+        from datetime import UTC, date, datetime
+
+        from alphasig.models import public_availability
+
+        # 17:30 EDT on the filing date, never midnight (which precedes release).
+        assert public_availability(date(2024, 7, 1), None) == datetime(
+            2024, 7, 1, 21, 30, tzinfo=UTC
+        )
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_older_filings_pages_are_followed(
+        self, mock_company_tickers: dict, mock_submissions: dict
+    ) -> None:
+        from datetime import date, timedelta
+
+        recent_year = date.today().year
+        mock_submissions["filings"]["files"] = [
+            {
+                "name": "CIK0000320193-submissions-001.json",
+                "filingFrom": f"{recent_year - 2}-01-01",
+                "filingTo": (date.today() - timedelta(days=200)).isoformat(),
+            },
+            {
+                "name": "CIK0000320193-submissions-002.json",
+                "filingFrom": "1994-01-01",
+                "filingTo": "2001-12-31",
+            },
+        ]
+        old_date = (date.today() - timedelta(days=300)).isoformat()
+        respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json=mock_company_tickers
+        )
+        respx.get("https://data.sec.gov/submissions/CIK0000320193.json").respond(
+            json=mock_submissions
+        )
+        page = respx.get(
+            "https://data.sec.gov/submissions/CIK0000320193-submissions-001.json"
+        ).respond(
+            json={
+                "accessionNumber": ["0000320193-99-000001"],
+                "form": ["10-K"],
+                "filingDate": [old_date],
+                "reportDate": [old_date],
+                "primaryDocument": ["old.htm"],
+            }
+        )
+        ancient = respx.get(
+            "https://data.sec.gov/submissions/CIK0000320193-submissions-002.json"
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            filings = await client.get_filings("AAPL", lookback_years=5)
+        assert page.called
+        assert not ancient.called  # entirely before the lookback window
+        assert "0000320193-99-000001" in {f.accession_number for f in filings}
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_amendments_are_not_mixed_into_originals(
+        self, mock_company_tickers: dict, mock_submissions: dict
+    ) -> None:
+        recent = mock_submissions["filings"]["recent"]
+        recent["accessionNumber"].append("0000320193-24-000200")
+        recent["form"].append("10-K/A")
+        recent["filingDate"].append("2024-12-01")
+        recent["reportDate"].append("2024-09-28")
+        recent["primaryDocument"].append("aapl-10ka.htm")
+        respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json=mock_company_tickers
+        )
+        respx.get("https://data.sec.gov/submissions/CIK0000320193.json").respond(
+            json=mock_submissions
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=None
+        ) as client:
+            filings = await client.get_filings("AAPL", ["10-K"], lookback_years=5)
+        assert [f.accession_number for f in filings] == [
+            "0000320193-23-000100",
+            "0000320193-24-000123",
+        ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_cache_write_leaves_no_partial_file(
+        self, mock_company_tickers: dict, mock_submissions: dict, tmp_path
+    ) -> None:
+        respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json=mock_company_tickers
+        )
+        respx.get("https://data.sec.gov/submissions/CIK0000320193.json").respond(
+            json=mock_submissions
+        )
+        respx.get(url__startswith="https://www.sec.gov/Archives/").respond(
+            text="<html>body</html>"
+        )
+        async with EdgarClient(
+            user_agent="Test test@example.com", cache_dir=str(tmp_path)
+        ) as client:
+            filings = await client.get_filings("AAPL", lookback_years=5)
+            await client.fetch_filing_html(filings[0])
+        assert [p.suffix for p in tmp_path.iterdir()] == [".html"]

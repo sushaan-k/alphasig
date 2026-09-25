@@ -35,10 +35,12 @@ def _build_app(signals: Sequence[Signal]) -> Any:
             "Install it with: pip install alphasig[api]"
         ) from exc
 
+    from alphasig import __version__
+
     app = FastAPI(
         title="alphasig",
         description="Causal signal extraction from SEC filings",
-        version="0.1.0",
+        version=__version__,
     )
 
     signal_dicts = [s.model_dump(mode="json") for s in signals]

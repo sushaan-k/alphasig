@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import socket
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 
+from alphasig.edgar import EdgarClient
 from alphasig.models import (
     Filing,
     FilingSection,
@@ -16,6 +20,49 @@ from alphasig.models import (
     SignalType,
     SupplyChainEdge,
 )
+from alphasig.output.webhook import WebhookSender
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly if a test tries to open a real (non-loopback) connection.
+
+    HTTP calls must be mocked with respx; this guard catches any that slip
+    through instead of silently hitting sec.gov or api.anthropic.com.
+    """
+    # A local HTTP(S) proxy would otherwise relay requests via loopback.
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv(var.lower(), raising=False)
+    real_connect = socket.socket.connect
+
+    def guarded(self: socket.socket, address: Any) -> Any:
+        host = address[0] if isinstance(address, tuple) else address
+        if (
+            self.family in (socket.AF_INET, socket.AF_INET6)
+            and isinstance(host, str)
+            and host not in {"127.0.0.1", "::1", "localhost"}
+        ):
+            raise RuntimeError(f"Network access in tests is forbidden: {address}")
+        return real_connect(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _instant_retries() -> Iterator[None]:
+    """Skip real backoff sleeps in tenacity-decorated methods."""
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    patched = [EdgarClient._get, WebhookSender._post]
+    originals = [fn.retry.sleep for fn in patched]  # type: ignore[attr-defined]
+    for fn in patched:
+        fn.retry.sleep = no_sleep  # type: ignore[attr-defined]
+    yield
+    for fn, original in zip(patched, originals, strict=True):
+        fn.retry.sleep = original  # type: ignore[attr-defined]
 
 
 @pytest.fixture

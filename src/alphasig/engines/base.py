@@ -4,16 +4,30 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
+from typing import Any
 
 from alphasig.llm import LLMClient
 from alphasig.models import FilingSection, Signal
 
 
+def json_objects(raw: Any) -> list[dict[str, Any]]:
+    """Normalise an LLM JSON payload to a list of objects.
+
+    Models occasionally return a bare object instead of an array, or mix
+    stray strings into the array; anything that is not a JSON object is
+    dropped so per-item parsing never trips over it.
+    """
+    items = raw if isinstance(raw, list) else [raw]
+    return [item for item in items if isinstance(item, dict)]
+
+
 class BaseEngine(abc.ABC):
     """Contract that every extraction engine must satisfy.
 
-    Engines are stateless callables: they receive parsed filing sections
-    and an LLM client, and return zero or more :class:`Signal` instances.
+    Engines receive parsed filing sections and an LLM client, and return
+    zero or more :class:`Signal` instances.  Signal timestamps are the time
+    the source filing became public (:attr:`FilingSection.available_at`),
+    never the period end, so signals are safe to use point-in-time.
     """
 
     @property

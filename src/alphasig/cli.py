@@ -2,7 +2,7 @@
 
 Usage::
 
-    alphasig extract --tickers AAPL --tickers MSFT --lookback 3
+    alphasig extract --tickers AAPL MSFT --lookback 3
     alphasig serve --port 8080 --db alphasig.duckdb
     alphasig query --ticker AAPL --type risk_change
 """
@@ -20,8 +20,13 @@ from rich.console import Console
 from rich.table import Table
 
 from alphasig._logging import configure_logging
+from alphasig.exceptions import ConfigurationError
+from alphasig.llm import DEFAULT_MODEL
+from alphasig.models import FilingType
 
 console = Console()
+
+_ENGINES = ("supply_chain", "risk_differ", "m_and_a", "tone")
 
 
 @click.group()
@@ -44,18 +49,23 @@ def main(verbose: int, json_logs: bool) -> None:
 
 
 @main.command()
+@click.argument("extra_tickers", nargs=-1, metavar="[TICKER]...")
 @click.option(
     "--tickers",
     "-t",
-    required=True,
     multiple=True,
-    help="Ticker symbols to analyse.",
+    help=(
+        "Ticker symbols to analyse: '--tickers AAPL MSFT', "
+        "'--tickers AAPL,MSFT' or repeated '-t AAPL -t MSFT'."
+    ),
 )
 @click.option(
     "--filing-types",
     "-f",
     multiple=True,
+    type=click.Choice([ft.value for ft in FilingType], case_sensitive=False),
     default=["10-K", "10-Q"],
+    show_default=True,
     help="SEC filing types to process.",
 )
 @click.option(
@@ -69,19 +79,26 @@ def main(verbose: int, json_logs: bool) -> None:
     "--engines",
     "-e",
     multiple=True,
-    default=["supply_chain", "risk_differ", "m_and_a", "tone"],
+    type=click.Choice(_ENGINES),
+    default=_ENGINES,
+    show_default=True,
     help="Extraction engines to run.",
 )
 @click.option(
     "--model",
     "-m",
-    default="claude-sonnet-4-6",
-    help="LLM model to use.",
+    default=DEFAULT_MODEL,
+    show_default=True,
+    help="Anthropic model to use (or set ALPHASIG_MODEL).",
 )
 @click.option(
     "--user-agent",
-    default="alphasig research bot research@example.com",
-    help="EDGAR User-Agent (name + email).",
+    envvar="ALPHASIG_USER_AGENT",
+    default=None,
+    help=(
+        "EDGAR User-Agent identifying you, 'Name email@domain' (SEC policy). "
+        "Defaults to $ALPHASIG_USER_AGENT."
+    ),
 )
 @click.option(
     "--cache-dir",
@@ -100,21 +117,33 @@ def main(verbose: int, json_logs: bool) -> None:
     help="Export signals to file (Parquet or CSV based on extension).",
 )
 def extract(
+    extra_tickers: tuple[str, ...],
     tickers: tuple[str, ...],
     filing_types: tuple[str, ...],
     lookback: int,
     engines: tuple[str, ...],
     model: str,
-    user_agent: str,
+    user_agent: str | None,
     cache_dir: str,
     db: str,
     output: str | None,
 ) -> None:
-    """Extract causal signals from SEC filings."""
+    """Extract causal signals from SEC filings for TICKER(s)."""
     from alphasig.pipeline import Pipeline
 
+    symbols = list(
+        dict.fromkeys(
+            part.strip().upper()
+            for raw in (*tickers, *extra_tickers)
+            for part in raw.split(",")
+            if part.strip()
+        )
+    )
+    if not symbols:
+        raise click.UsageError("Provide at least one ticker, e.g. --tickers AAPL MSFT")
+
     console.print(
-        f"[bold blue]alphasig[/] extracting signals for {', '.join(tickers)}",
+        f"[bold blue]alphasig[/] extracting signals for {', '.join(symbols)}",
     )
 
     pipeline = Pipeline(
@@ -124,14 +153,17 @@ def extract(
         db_path=db,
     )
 
-    collection = asyncio.run(
-        pipeline.extract(
-            tickers=list(tickers),
-            filing_types=list(filing_types),
-            lookback_years=lookback,
-            engines=list(engines),
+    try:
+        collection = asyncio.run(
+            pipeline.extract(
+                tickers=symbols,
+                filing_types=list(filing_types),
+                lookback_years=lookback,
+                engines=list(engines),
+            )
         )
-    )
+    except ConfigurationError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Display results
     _print_signal_table(collection)
@@ -166,13 +198,15 @@ def query(
     from alphasig.storage import SignalStore
 
     store = SignalStore(db)
-    signals = store.query(
-        ticker=ticker,
-        signal_type=signal_type,
-        min_strength=min_strength,
-        limit=limit,
-    )
-    store.close()
+    try:
+        signals = store.query(
+            ticker=ticker,
+            signal_type=signal_type,
+            min_strength=min_strength,
+            limit=limit,
+        )
+    finally:
+        store.close()
 
     collection = SignalCollection(signals)
     _print_signal_table(collection)
@@ -191,7 +225,17 @@ def query(
     "--as-of",
     "as_of_raw",
     default=None,
-    help="Evaluate decayed signal strength at this ISO timestamp.",
+    help=(
+        "Score as of this ISO timestamp: later signals are excluded and "
+        "strengths are decayed to it."
+    ),
+)
+@click.option(
+    "--half-life",
+    "half_life",
+    default=None,
+    type=click.FloatRange(min=0, min_open=True),
+    help="Decay every signal with this half-life in days (implies --as-of now).",
 )
 @click.option(
     "--format",
@@ -207,6 +251,7 @@ def rank(
     limit: int,
     min_confidence: float | None,
     as_of_raw: str | None,
+    half_life: float | None,
     output_format: str,
     output: str | None,
 ) -> None:
@@ -224,7 +269,7 @@ def rank(
     finally:
         store.close()
 
-    report = rank_signals(signals, as_of=as_of, limit=limit)
+    report = rank_signals(signals, as_of=as_of, limit=limit, half_life_days=half_life)
     if output_format == "json":
         rendered = report.to_json() + "\n"
     elif output_format == "markdown":
@@ -257,7 +302,17 @@ def rank(
     "--as-of",
     "as_of_raw",
     default=None,
-    help="Evaluate decayed signal strength at this ISO timestamp.",
+    help=(
+        "Score as of this ISO timestamp: later signals are excluded and "
+        "strengths are decayed to it."
+    ),
+)
+@click.option(
+    "--half-life",
+    "half_life",
+    default=None,
+    type=click.FloatRange(min=0, min_open=True),
+    help="Decay every signal with this half-life in days (implies --as-of now).",
 )
 @click.option(
     "--format",
@@ -279,6 +334,7 @@ def sectors(
     limit: int | None,
     min_confidence: float | None,
     as_of_raw: str | None,
+    half_life: float | None,
     output_format: str,
     include_unknown: bool,
     output: str | None,
@@ -302,6 +358,7 @@ def sectors(
         as_of=as_of,
         limit=limit,
         include_unknown=include_unknown,
+        half_life_days=half_life,
     )
     if output_format == "json":
         rendered = report.to_json() + "\n"
@@ -332,8 +389,10 @@ def serve(db: str, host: str, port: int) -> None:
     from alphasig.storage import SignalStore
 
     store = SignalStore(db)
-    signals = store.query(limit=100_000)
-    store.close()
+    try:
+        signals = store.query(limit=100_000)
+    finally:
+        store.close()
 
     console.print(
         f"[bold blue]alphasig[/] serving {len(signals)} signals on {host}:{port}",

@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
-from alphasig.engines.base import BaseEngine
+from alphasig.engines.base import BaseEngine, json_objects
 from alphasig.llm import LLMClient
 from alphasig.models import (
     FilingSection,
@@ -65,6 +64,11 @@ _DIRECTION_MAP: dict[RiskChangeType, SignalDirection] = {
     RiskChangeType.DE_ESCALATED: SignalDirection.BULLISH,
 }
 
+# Per-side cap on Risk Factors text sent to the model (~50k tokens).  Both
+# versions must be compared in full: truncating a lightly edited section
+# pushes its tail out of one side and fabricates NEW / REMOVED changes.
+_MAX_SECTION_CHARS = 200_000
+
 _SEVERITY_STRENGTH: dict[Severity, float] = {
     Severity.LOW: 0.25,
     Severity.MEDIUM: 0.50,
@@ -76,12 +80,15 @@ _SEVERITY_STRENGTH: dict[Severity, float] = {
 def compute_text_similarity(text_a: str, text_b: str) -> float:
     """Compute a 0-1 similarity ratio between two text blocks.
 
-    Uses :class:`difflib.SequenceMatcher` on whitespace-normalised
-    text.  A ratio below ~0.85 usually indicates substantive changes.
+    Compares word sequences with :class:`difflib.SequenceMatcher`.
+    Word tokens (rather than characters) keep this fast on 50k+ character
+    sections, and ``autojunk`` is disabled because its popularity heuristic
+    discards the most common tokens of long inputs and badly understates
+    the similarity of lightly edited text.
     """
-    a_norm = " ".join(text_a.split())
-    b_norm = " ".join(text_b.split())
-    return difflib.SequenceMatcher(None, a_norm, b_norm).ratio()
+    return difflib.SequenceMatcher(
+        None, text_a.split(), text_b.split(), autojunk=False
+    ).ratio()
 
 
 class RiskDifferEngine(BaseEngine):
@@ -142,9 +149,14 @@ class RiskDifferEngine(BaseEngine):
             )
             return []
 
-        # Truncate to fit context window
-        current_text = current_rf.text[:40_000]
-        previous_text = previous_rf.text[:40_000]
+        if max(len(current_rf.text), len(previous_rf.text)) > _MAX_SECTION_CHARS:
+            logger.warning(
+                "risk_differ_truncated",
+                ticker=current_rf.ticker,
+                max_chars=_MAX_SECTION_CHARS,
+            )
+        current_text = current_rf.text[:_MAX_SECTION_CHARS]
+        previous_text = previous_rf.text[:_MAX_SECTION_CHARS]
 
         user_msg = (
             f"Company: {current_rf.ticker}\n"
@@ -156,16 +168,14 @@ class RiskDifferEngine(BaseEngine):
             f"--- CURRENT RISK FACTORS ---\n{current_text}\n"
         )
 
-        raw_items = await llm.extract_json(_SYSTEM_PROMPT, user_msg, temperature=0.0)
-        if not isinstance(raw_items, list):
-            raw_items = [raw_items]
+        raw_items = await llm.extract_json(_SYSTEM_PROMPT, user_msg)
 
         changes: list[RiskChange] = []
-        for item in raw_items:
+        for item in json_objects(raw_items):
             try:
                 change = _parse_risk_change(item, current_rf, previous_rf)
                 changes.append(change)
-            except (ValueError, KeyError) as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 logger.warning(
                     "risk_differ_parse_error",
                     error=str(exc),
@@ -212,7 +222,7 @@ def _parse_risk_change(
         language_shift=str(item.get("language_shift", "")),
         severity_estimate=Severity(item.get("severity_estimate", "MEDIUM")),
         confidence=float(item.get("confidence", 0.8)),
-        related_tickers=item.get("related_tickers", []),
+        related_tickers=item.get("related_tickers") or [],
     )
 
 
@@ -229,11 +239,7 @@ def _changes_to_signals(
         strength = base_strength * change.confidence
         signals.append(
             Signal(
-                timestamp=datetime.combine(
-                    section.filed_date,
-                    datetime.min.time(),
-                    tzinfo=UTC,
-                ),
+                timestamp=section.available_at,
                 ticker=change.ticker,
                 signal_type=SignalType.RISK_CHANGE,
                 direction=direction,

@@ -9,13 +9,13 @@ shifts.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
-from alphasig.engines.base import BaseEngine
+from alphasig.engines.base import BaseEngine, json_objects
 from alphasig.llm import LLMClient
 from alphasig.models import (
     FilingSection,
@@ -94,7 +94,15 @@ def classify_tone_shift(
 
 
 class ToneEngine(BaseEngine):
-    """Track topic-level management tone across filings."""
+    """Track topic-level management tone across filings.
+
+    Each MD&A is classified once per engine instance: in a filing series
+    the previous filing's tones are reused from the call that classified it
+    as the current filing, halving LLM calls for a run.
+    """
+
+    def __init__(self) -> None:
+        self._tones: dict[tuple[str, int], asyncio.Future[list[dict[str, Any]]]] = {}
 
     @property
     def name(self) -> str:
@@ -125,7 +133,7 @@ class ToneEngine(BaseEngine):
             )
             return []
 
-        current_tones = await _extract_tones(current_mda, llm)
+        current_tones = await self._tones_for(current_mda, llm)
         if not current_tones:
             return []
 
@@ -133,7 +141,7 @@ class ToneEngine(BaseEngine):
         if previous_sections:
             previous_mda = _find_mda(previous_sections)
             if previous_mda:
-                previous_tones = await _extract_tones(previous_mda, llm)
+                previous_tones = await self._tones_for(previous_mda, llm)
                 return _compute_shifts(
                     current_tones,
                     previous_tones,
@@ -149,6 +157,22 @@ class ToneEngine(BaseEngine):
             filing=current_mda.filed_date.isoformat(),
         )
         return _compute_baselines(current_tones, current_mda)
+
+    async def _tones_for(
+        self, section: FilingSection, llm: LLMClient
+    ) -> list[dict[str, Any]]:
+        """Classify *section* once, sharing the result with concurrent callers."""
+        key = (section.filing_accession, hash(section.text))
+        future = self._tones.get(key)
+        if future is None:
+            future = asyncio.ensure_future(_extract_tones(section, llm))
+            self._tones[key] = future
+        try:
+            return await asyncio.shield(future)
+        except Exception:
+            # Do not cache failures: a later filing may retry the call.
+            self._tones.pop(key, None)
+            raise
 
 
 def _find_mda(
@@ -171,10 +195,15 @@ async def _extract_tones(
         f"filed {section.filed_date.isoformat()}\n\n"
         f"--- BEGIN MD&A ---\n{text}\n--- END MD&A ---"
     )
-    raw_items = await llm.extract_json(_SYSTEM_PROMPT, user_msg, temperature=0.0)
-    if not isinstance(raw_items, list):
-        raw_items = [raw_items]
-    return raw_items
+    return json_objects(await llm.extract_json(_SYSTEM_PROMPT, user_msg))
+
+
+def _confidence(item: dict[str, Any]) -> float | None:
+    try:
+        value = float(item.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        return None
+    return value if 0.0 <= value <= 1.0 else None
 
 
 def _compute_baselines(
@@ -197,17 +226,13 @@ def _compute_baselines(
             continue
 
         direction, strength = _TONE_BASELINE[current_tone]
-        if direction == SignalDirection.NEUTRAL:
+        confidence = _confidence(item)
+        if direction == SignalDirection.NEUTRAL or confidence is None:
             continue
 
-        confidence = float(item.get("confidence", 0.5))
         signals.append(
             Signal(
-                timestamp=datetime.combine(
-                    current_section.filed_date,
-                    datetime.min.time(),
-                    tzinfo=UTC,
-                ),
+                timestamp=current_section.available_at,
                 ticker=current_section.ticker,
                 signal_type=SignalType.TONE_SHIFT,
                 direction=direction,
@@ -260,7 +285,9 @@ def _compute_shifts(
         except ValueError:
             continue
 
-        confidence = float(item.get("confidence", 0.5))
+        confidence = _confidence(item)
+        if confidence is None:
+            continue
 
         # Find the closest matching previous topic
         prev = prev_by_topic.get(topic)
@@ -278,11 +305,7 @@ def _compute_shifts(
 
         signals.append(
             Signal(
-                timestamp=datetime.combine(
-                    current_section.filed_date,
-                    datetime.min.time(),
-                    tzinfo=UTC,
-                ),
+                timestamp=current_section.available_at,
                 ticker=current_section.ticker,
                 signal_type=SignalType.TONE_SHIFT,
                 direction=direction,

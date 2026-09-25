@@ -395,3 +395,30 @@ class TestCorrelate:
         assert len(cm.signal_types) == 3
         assert len(cm.matrix) == 3
         assert all(len(row) == 3 for row in cm.matrix)
+
+
+def test_between_and_where_accept_naive_datetimes(sample_signals: list[Signal]) -> None:
+    coll = SignalCollection(sample_signals)
+    start, end = datetime(2000, 1, 1), datetime(2100, 1, 1)  # naive = UTC
+    assert len(coll.between(start, end)) == len(coll)
+    assert len(coll.where(start=start, end=end)) == len(coll)
+
+
+def test_signal_timestamp_normalised_to_utc() -> None:
+    from datetime import timedelta, timezone
+
+    sig = Signal(
+        timestamp=datetime(2024, 11, 1, 18, 4, tzinfo=timezone(timedelta(hours=-4))),
+        ticker="AAPL",
+        signal_type=SignalType.RISK_CHANGE,
+        direction=SignalDirection.BEARISH,
+        strength=0.5,
+        confidence=0.5,
+        context="c",
+        source_filing="s",
+        decay_rate=0.01,
+    )
+    assert sig.timestamp == datetime(2024, 11, 1, 22, 4, tzinfo=UTC)
+    assert sig.timestamp.tzinfo is UTC
+    # Naive as_of is accepted (taken as UTC) instead of raising TypeError.
+    assert sig.current_strength(as_of=datetime(2024, 11, 11, 22, 4)) < 0.5

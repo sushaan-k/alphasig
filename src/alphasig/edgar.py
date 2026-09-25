@@ -1,8 +1,14 @@
 """Async EDGAR API client with rate limiting and caching.
 
-SEC EDGAR enforces a limit of 10 requests per second.  This client
-respects that constraint using a token-bucket approach built on
-:mod:`asyncio` primitives.
+SEC EDGAR's fair-access policy requires a declared User-Agent with a
+contact email and at most 10 requests per second.  One client shares a
+single connection pool and rate limiter across all concurrent tasks, backs
+off on 429 / 5xx (honouring ``Retry-After``), and times out stalled
+requests.
+
+Only the form types in :class:`~alphasig.models.FilingType` are returned;
+amendments (``10-K/A`` etc.) are skipped because the original filing is
+what the market saw first, and many amendments only restate Part III.
 
 Typical usage::
 
@@ -17,13 +23,15 @@ import asyncio
 import hashlib
 import time
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import structlog
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -38,6 +46,8 @@ from alphasig.exceptions import (
 )
 from alphasig.models import Filing, FilingType
 
+_EASTERN = ZoneInfo("America/New_York")
+
 logger = structlog.get_logger()
 
 _EDGAR_FULL_TEXT_SEARCH = "https://efts.sec.gov/LATEST/search-index"
@@ -49,30 +59,45 @@ _MAX_RPS = 10  # SEC rate limit
 
 
 class _RateLimiter:
-    """Simple token-bucket rate limiter for EDGAR's 10 req/s policy."""
+    """Spaces requests at least ``1 / max_per_second`` apart.
+
+    Unlike a token bucket this never bursts, so no one-second window can
+    exceed the SEC's limit.  Waiters reserve their slot under the lock and
+    sleep outside it, so concurrent tasks sharing one client queue fairly.
+    """
 
     def __init__(self, max_per_second: int = _MAX_RPS) -> None:
-        self._max = max_per_second
-        self._tokens = float(max_per_second)
-        self._last = time.monotonic()
+        self._interval = 1.0 / max_per_second
+        self._next = 0.0
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
         async with self._lock:
             now = time.monotonic()
-            elapsed = now - self._last
-            self._tokens = min(self._max, self._tokens + elapsed * self._max)
-            self._last = now
-            if self._tokens < 1:
-                wait = (1 - self._tokens) / self._max
-                await asyncio.sleep(wait)
-                # Recalculate tokens after sleeping, then subtract 1
-                # for the request being granted.
-                now = time.monotonic()
-                elapsed = now - self._last
-                self._tokens = min(self._max, self._tokens + elapsed * self._max)
-                self._last = now
-            self._tokens -= 1
+            slot = max(now, self._next)
+            self._next = slot + self._interval
+        if slot > now:
+            await asyncio.sleep(slot - now)
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """Parse a numeric ``Retry-After`` header (HTTP-date form is ignored)."""
+    try:
+        return max(0.0, float(resp.headers["Retry-After"]))
+    except (KeyError, ValueError):
+        return None
+
+
+_backoff = wait_exponential(multiplier=1, min=2, max=30)
+
+
+def _retry_wait(state: RetryCallState) -> float:
+    """Honour the server's ``Retry-After`` when given, else back off exponentially."""
+    exc = state.outcome.exception() if state.outcome else None
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        return float(min(retry_after, 60.0))
+    return float(_backoff(state))
 
 
 class EdgarClient:
@@ -102,6 +127,7 @@ class EdgarClient:
         self._limiter = _RateLimiter()
         self._client: httpx.AsyncClient | None = None
         self._ticker_to_cik: dict[str, str] = {}
+        self._cik_lock = asyncio.Lock()
 
     # -- Context manager ------------------------------------------------------
 
@@ -130,28 +156,41 @@ class EdgarClient:
 
     @retry(
         retry=retry_if_exception_type((EdgarRateLimitError, EdgarTransientError)),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
+        wait=_retry_wait,
         stop=stop_after_attempt(5),
         reraise=True,
     )
     async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Issue a rate-limited GET, retrying on 429, timeouts, and 5xx errors."""
+        """Issue a rate-limited GET, retrying on 429, network errors, and 5xx."""
         client = self._assert_open()
         await self._limiter.acquire()
         try:
             resp = await client.get(url, **kwargs)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        except httpx.TransportError as exc:
             logger.warning("edgar_network_error", url=url, error=str(exc))
             raise EdgarTransientError(f"Network error fetching {url}: {exc}") from exc
         if resp.status_code == 429:
             logger.warning("edgar_rate_limited", url=url)
-            raise EdgarRateLimitError("EDGAR returned 429")
+            err = EdgarRateLimitError("EDGAR returned 429")
+            err.retry_after = _retry_after_seconds(resp)
+            raise err
         if resp.status_code == 404:
             raise EdgarNotFoundError(f"Not found: {url}")
         if resp.status_code >= 500:
             logger.warning("edgar_server_error", url=url, status=resp.status_code)
-            raise EdgarTransientError(f"EDGAR returned {resp.status_code} for {url}")
-        resp.raise_for_status()
+            transient = EdgarTransientError(
+                f"EDGAR returned {resp.status_code} for {url}"
+            )
+            transient.retry_after = _retry_after_seconds(resp)
+            raise transient
+        if resp.status_code == 403:
+            raise EdgarError(
+                f"EDGAR refused {url} (403). The SEC blocks requests without a "
+                "declared User-Agent ('Name email@domain') and clients that "
+                "exceed 10 requests/second."
+            )
+        if resp.is_error:
+            raise EdgarError(f"EDGAR returned {resp.status_code} for {url}")
         return resp
 
     def _cache_key(self, url: str) -> Path | None:
@@ -170,7 +209,11 @@ class EdgarClient:
         resp = await self._get(url)
         text = resp.text
         if cache_path:
-            cache_path.write_text(text, encoding="utf-8")
+            # Write-then-rename so an interrupted run never leaves a truncated
+            # file that later reads would treat as a cache hit.
+            tmp_path = cache_path.with_suffix(".tmp")
+            tmp_path.write_text(text, encoding="utf-8")
+            tmp_path.replace(cache_path)
         return text
 
     # -- Public API -----------------------------------------------------------
@@ -188,15 +231,16 @@ class EdgarClient:
             EdgarNotFoundError: If the ticker cannot be resolved.
         """
         ticker = ticker.upper()
-        if ticker in self._ticker_to_cik:
-            return self._ticker_to_cik[ticker]
-
-        resp = await self._get(_COMPANY_TICKERS_URL)
-        data: dict[str, Any] = resp.json()
-        for entry in data.values():
-            t = str(entry.get("ticker", "")).upper()
-            cik = str(entry.get("cik_str", "")).zfill(10)
-            self._ticker_to_cik[t] = cik
+        # The lock stops concurrent tickers from each downloading the
+        # (large) ticker map before the first download has populated it.
+        async with self._cik_lock:
+            if not self._ticker_to_cik:
+                resp = await self._get(_COMPANY_TICKERS_URL)
+                data: dict[str, Any] = resp.json()
+                for entry in data.values():
+                    t = str(entry.get("ticker", "")).upper()
+                    cik = str(entry.get("cik_str", "")).zfill(10)
+                    self._ticker_to_cik[t] = cik
 
         if ticker not in self._ticker_to_cik:
             raise EdgarNotFoundError(f"Unknown ticker: {ticker}")
@@ -220,60 +264,38 @@ class EdgarClient:
             List of :class:`Filing` instances (without ``raw_html``).
         """
         cik = await self.resolve_cik(ticker)
-        url = f"{_EDGAR_SUBMISSIONS}/CIK{cik}.json"
-        resp = await self._get(url)
+        resp = await self._get(f"{_EDGAR_SUBMISSIONS}/CIK{cik}.json")
         payload: dict[str, Any] = resp.json()
 
         company_name = str(payload.get("name", ticker))
-        recent = payload.get("filings", {}).get("recent", {})
+        filings_meta = payload.get("filings", {})
 
-        forms: list[str] = recent.get("form", [])
-        accessions: list[str] = recent.get("accessionNumber", [])
-        dates_filed: list[str] = recent.get("filingDate", [])
-        periods: list[str] = recent.get("reportDate", [])
-        primary_docs: list[str] = recent.get("primaryDocument", [])
-
-        type_filter = set()
-        if filing_types:
-            for ft in filing_types:
-                type_filter.add(ft.value if isinstance(ft, FilingType) else ft)
-        else:
-            type_filter = {"10-K", "10-Q"}
+        type_filter = (
+            {ft.value if isinstance(ft, FilingType) else ft for ft in filing_types}
+            if filing_types
+            else {"10-K", "10-Q"}
+        )
+        unsupported = type_filter - {ft.value for ft in FilingType}
+        if unsupported:
+            logger.warning("edgar_unsupported_form_types", types=sorted(unsupported))
 
         cutoff = date.today() - timedelta(days=lookback_years * 365)
+
+        # ``recent`` holds only the latest ~1000 filings; prolific filers
+        # (e.g. heavy Form 4 activity) push older 10-K/10-Qs into
+        # additional pages listed under ``files``.
+        pages: list[dict[str, Any]] = [filings_meta.get("recent", {})]
+        for extra in filings_meta.get("files", []):
+            filing_to = extra.get("filingTo")
+            if filing_to and date.fromisoformat(filing_to) >= cutoff:
+                older = await self._get(f"{_EDGAR_SUBMISSIONS}/{extra['name']}")
+                pages.append(older.json())
+
         filings: list[Filing] = []
-
-        for i, form in enumerate(forms):
-            if form not in type_filter:
-                continue
-            filed = date.fromisoformat(dates_filed[i])
-            if filed < cutoff:
-                continue
-
-            accession_raw = accessions[i]
-            accession_no_dash = accession_raw.replace("-", "")
-            doc = primary_docs[i]
-            filing_url = (
-                f"{_EDGAR_ARCHIVES}/{cik.lstrip('0')}/{accession_no_dash}/{doc}"
-            )
-
-            period = date.fromisoformat(periods[i]) if periods[i] else filed
-
-            try:
-                ftype = FilingType(form)
-            except ValueError:
-                continue
-
-            filings.append(
-                Filing(
-                    accession_number=accession_raw,
-                    cik=cik,
-                    ticker=ticker.upper(),
-                    company_name=company_name,
-                    filing_type=ftype,
-                    filed_date=filed,
-                    period_of_report=period,
-                    url=filing_url,
+        for page in pages:
+            filings.extend(
+                self._filings_from_page(
+                    page, cik, ticker.upper(), company_name, type_filter, cutoff
                 )
             )
 
@@ -284,6 +306,59 @@ class EdgarClient:
             types=sorted(type_filter),
         )
         return sorted(filings, key=lambda f: f.filed_date)
+
+    @staticmethod
+    def _filings_from_page(
+        page: dict[str, Any],
+        cik: str,
+        ticker: str,
+        company_name: str,
+        type_filter: set[str],
+        cutoff: date,
+    ) -> list[Filing]:
+        """Build :class:`Filing` objects from one columnar submissions page."""
+        forms: list[str] = page.get("form", [])
+        accessions: list[str] = page.get("accessionNumber", [])
+        dates_filed: list[str] = page.get("filingDate", [])
+        periods: list[str] = page.get("reportDate", [])
+        primary_docs: list[str] = page.get("primaryDocument", [])
+        accepted: list[str] = page.get("acceptanceDateTime", [])
+
+        filings: list[Filing] = []
+        for i, form in enumerate(forms):
+            if form not in type_filter:
+                continue
+            try:
+                ftype = FilingType(form)
+            except ValueError:
+                continue
+            filed = date.fromisoformat(dates_filed[i])
+            if filed < cutoff or not primary_docs[i]:
+                continue
+
+            accession = accessions[i]
+            filing_url = (
+                f"{_EDGAR_ARCHIVES}/{int(cik)}/{accession.replace('-', '')}/"
+                f"{primary_docs[i]}"
+            )
+            period = date.fromisoformat(periods[i]) if periods[i] else filed
+
+            filings.append(
+                Filing(
+                    accession_number=accession,
+                    cik=cik,
+                    ticker=ticker,
+                    company_name=company_name,
+                    filing_type=ftype,
+                    filed_date=filed,
+                    period_of_report=period,
+                    url=filing_url,
+                    accepted_at=_parse_acceptance(
+                        accepted[i] if i < len(accepted) else ""
+                    ),
+                )
+            )
+        return filings
 
     async def fetch_filing_html(self, filing: Filing) -> Filing:
         """Download the raw HTML for a filing and return an updated copy.
@@ -349,3 +424,20 @@ class EdgarClient:
         data: dict[str, Any] = resp.json()
         hits: list[dict[str, Any]] = data.get("hits", {}).get("hits", [])
         return hits[:limit]
+
+
+def _parse_acceptance(raw: str) -> datetime | None:
+    """Parse EDGAR's ``acceptanceDateTime``.
+
+    The submissions API renders it with a ``Z`` suffix, but the value is
+    Eastern time (it matches the "Accepted" time on EDGAR filing index
+    pages).  Treating it as UTC would date filings up to five hours too
+    early -- a look-ahead bias in any backtest keyed on it.
+    """
+    if not raw:
+        return None
+    try:
+        naive = datetime.fromisoformat(raw.rstrip("Z")).replace(tzinfo=None)
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=_EASTERN)

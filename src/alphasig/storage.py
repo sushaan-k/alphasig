@@ -11,9 +11,11 @@ import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import duckdb
+import pyarrow as pa
 import structlog
 
 from alphasig.exceptions import StorageError
@@ -40,11 +42,26 @@ CREATE TABLE IF NOT EXISTS signals (
 
 _CREATE_SEQUENCE = "CREATE SEQUENCE IF NOT EXISTS signal_seq START 1;"
 
-_INSERT = """\
+# Bulk insert from a registered Arrow table, skipping signals that are
+# already stored so re-running an extraction does not duplicate rows.
+_INSERT_NEW = """\
 INSERT INTO signals
     (timestamp, ticker, signal_type, direction, strength,
      confidence, context, source_filing, related_tickers, metadata)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+SELECT DISTINCT ON (timestamp, ticker, signal_type, direction, context,
+                    source_filing)
+    timestamp, ticker, signal_type, direction, strength,
+    confidence, context, source_filing, related_tickers, metadata
+FROM _alphasig_staged AS s
+WHERE NOT EXISTS (
+    SELECT 1 FROM signals AS t
+    WHERE t.timestamp = s.timestamp
+      AND t.ticker = s.ticker
+      AND t.signal_type = s.signal_type
+      AND t.direction = s.direction
+      AND t.context IS NOT DISTINCT FROM s.context
+      AND t.source_filing IS NOT DISTINCT FROM s.source_filing
+);
 """
 
 
@@ -67,36 +84,60 @@ class SignalStore:
                 f"Failed to initialise DuckDB at {self._db_path}"
             ) from exc
 
+    def __enter__(self) -> SignalStore:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
     def insert(self, signals: Sequence[Signal]) -> int:
         """Insert signals into the store.
+
+        A signal already stored with the same timestamp, ticker, type,
+        direction, context and source filing is skipped, so re-running an
+        extraction over overlapping filings is idempotent.
 
         Args:
             signals: Signals to persist.
 
         Returns:
-            Number of signals inserted.
+            Number of new signals inserted.
         """
-        rows = [
-            (
-                self._to_storage_timestamp(s.timestamp),
-                s.ticker,
-                s.signal_type.value,
-                s.direction.value,
-                s.strength,
-                s.confidence,
-                s.context,
-                s.source_filing,
-                json.dumps(s.related_tickers),
-                json.dumps(s.metadata),
-            )
-            for s in signals
-        ]
+        if not signals:
+            return 0
+        staged = pa.table(
+            {
+                "timestamp": pa.array(
+                    [self._to_storage_timestamp(s.timestamp) for s in signals],
+                    type=pa.timestamp("us"),
+                ),
+                "ticker": [s.ticker for s in signals],
+                "signal_type": [s.signal_type.value for s in signals],
+                "direction": [s.direction.value for s in signals],
+                "strength": pa.array([s.strength for s in signals], pa.float64()),
+                "confidence": pa.array([s.confidence for s in signals], pa.float64()),
+                "context": [s.context for s in signals],
+                "source_filing": [s.source_filing for s in signals],
+                "related_tickers": [json.dumps(s.related_tickers) for s in signals],
+                "metadata": [json.dumps(s.metadata) for s in signals],
+            }
+        )
         try:
-            self._conn.executemany(_INSERT, rows)
-            logger.info("signals_stored", count=len(rows))
-            return len(rows)
+            self._conn.register("_alphasig_staged", staged)
+            try:
+                row = self._conn.execute(_INSERT_NEW).fetchone()
+            finally:
+                self._conn.unregister("_alphasig_staged")
         except duckdb.Error as exc:
             raise StorageError(f"Failed to insert signals: {exc}") from exc
+        inserted = int(row[0]) if row else 0
+        logger.info("signals_stored", count=inserted, skipped=len(signals) - inserted)
+        return inserted
 
     def query(
         self,
@@ -143,12 +184,14 @@ class SignalStore:
         if min_confidence is not None:
             conditions.append("confidence >= ?")
             params.append(min_confidence)
+        # Timestamps are stored as naive UTC; binding an aware datetime would
+        # make DuckDB compare in the session's local time zone.
         if start:
             conditions.append("timestamp >= ?")
-            params.append(start)
+            params.append(self._to_storage_timestamp(start))
         if end:
             conditions.append("timestamp <= ?")
-            params.append(end)
+            params.append(self._to_storage_timestamp(end))
 
         where = " AND ".join(conditions) if conditions else "1=1"
         sql = (

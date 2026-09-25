@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
-from alphasig.models import Signal
+from alphasig.models import Signal, SignalDirection, SignalType
 
 logger = structlog.get_logger()
 
@@ -123,8 +123,6 @@ def read_signals_parquet(path: str | Path) -> list[Signal]:
     Returns:
         List of :class:`Signal` instances.
     """
-    from alphasig.models import SignalDirection, SignalType
-
     table = pq.read_table(str(path))
     signals: list[Signal] = []
     for batch in table.to_batches():
@@ -137,10 +135,10 @@ def read_signals_parquet(path: str | Path) -> list[Signal]:
                     direction=SignalDirection(row["direction"]),
                     strength=row["strength"],
                     confidence=row["confidence"],
-                    context=row["context"],
-                    source_filing=row["source_filing"],
-                    related_tickers=json.loads(row.get("related_tickers", "[]")),
-                    metadata=json.loads(row.get("metadata", "{}")),
+                    context=row["context"] or "",
+                    source_filing=row["source_filing"] or "",
+                    related_tickers=json.loads(row.get("related_tickers") or "[]"),
+                    metadata=json.loads(row.get("metadata") or "{}"),
                 )
             )
     return signals

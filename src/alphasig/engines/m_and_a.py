@@ -17,12 +17,14 @@ detection is based on categories derived from academic M&A research:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
+from typing import Any
 
 import structlog
 
-from alphasig.engines.base import BaseEngine
+from alphasig.engines.base import BaseEngine, json_objects
 from alphasig.llm import LLMClient
 from alphasig.models import (
     FilingSection,
@@ -109,22 +111,12 @@ class MandAEngine(BaseEngine):
         filing_type = sections[0].filing_type
         filed_date = sections[0].filed_date
 
-        for section in sections:
-            text = section.text[:50_000]
-            user_msg = (
-                f"Company ticker: {section.ticker}\n"
-                f"Filing type: {section.filing_type.value}\n"
-                f"Section: {section.section_name}\n\n"
-                f"--- BEGIN FILING TEXT ---\n{text}\n--- END FILING TEXT ---"
-            )
-
-            raw_items = await llm.extract_json(
-                _SYSTEM_PROMPT, user_msg, temperature=0.0
-            )
-            if not isinstance(raw_items, list):
-                raw_items = [raw_items]
-
-            for item in raw_items:
+        # Sections are independent; the LLM client bounds concurrency.
+        responses = await asyncio.gather(
+            *(_scan_section(section, llm) for section in sections)
+        )
+        for raw_items in responses:
+            for item in json_objects(raw_items):
                 try:
                     ind = MandAIndicator(
                         ticker=ticker,
@@ -136,14 +128,14 @@ class MandAEngine(BaseEngine):
                         filed_date=filed_date,
                     )
                     indicators.append(ind)
-                except (ValueError, KeyError) as exc:
+                except (ValueError, KeyError, TypeError) as exc:
                     logger.warning(
                         "m_and_a_parse_error",
                         error=str(exc),
                         item=str(item)[:200],
                     )
 
-        signals = _indicators_to_signals(indicators)
+        signals = _indicators_to_signals(indicators, sections[0].available_at)
         logger.info(
             "m_and_a_extracted",
             ticker=ticker,
@@ -153,8 +145,20 @@ class MandAEngine(BaseEngine):
         return signals
 
 
+async def _scan_section(section: FilingSection, llm: LLMClient) -> Any:
+    text = section.text[:50_000]
+    user_msg = (
+        f"Company ticker: {section.ticker}\n"
+        f"Filing type: {section.filing_type.value}\n"
+        f"Section: {section.section_name}\n\n"
+        f"--- BEGIN FILING TEXT ---\n{text}\n--- END FILING TEXT ---"
+    )
+    return await llm.extract_json(_SYSTEM_PROMPT, user_msg)
+
+
 def _indicators_to_signals(
     indicators: list[MandAIndicator],
+    timestamp: datetime,
 ) -> list[Signal]:
     """Convert M&A indicators into standardised Signal objects."""
     if not indicators:
@@ -200,7 +204,6 @@ def _indicators_to_signals(
         direction = SignalDirection.NEUTRAL
 
     ticker = indicators[0].ticker
-    filed_date = indicators[0].filed_date
 
     # One summary signal
     summary_parts = [
@@ -210,7 +213,7 @@ def _indicators_to_signals(
 
     signals: list[Signal] = [
         Signal(
-            timestamp=datetime.combine(filed_date, datetime.min.time(), tzinfo=UTC),
+            timestamp=timestamp,
             ticker=ticker,
             signal_type=SignalType.M_AND_A,
             direction=direction,
@@ -221,7 +224,7 @@ def _indicators_to_signals(
             related_tickers=[],
             metadata={
                 "indicator_count": len(indicators),
-                "categories": list({i.category for i in indicators}),
+                "categories": sorted({i.category for i in indicators}),
                 "indicators": [
                     {
                         "indicator": i.indicator,

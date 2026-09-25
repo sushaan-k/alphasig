@@ -9,6 +9,7 @@ import pytest
 import respx
 
 from alphasig.exceptions import ExtractionError, PipelineError
+from alphasig.llm import DEFAULT_MODEL
 from alphasig.models import Signal, SignalDirection, SignalType
 from alphasig.pipeline import (
     Pipeline,
@@ -137,7 +138,7 @@ class TestPipelineIntegration:
 
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -186,7 +187,7 @@ class TestPipelineIntegration:
         mock_response = AsyncMock(return_value=[])
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -221,7 +222,7 @@ class TestPipelineIntegration:
         mock_response = AsyncMock(return_value=[])
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -271,7 +272,7 @@ class TestPipelineIntegration:
         mock_response = AsyncMock(return_value=[])
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -355,7 +356,7 @@ class TestPipelineIntegration:
             new=alternating_response,
         ):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -377,14 +378,14 @@ class TestPipelineIntegration:
     async def test_pipeline_defaults(self) -> None:
         """Pipeline can be constructed with default parameters."""
         pipeline = Pipeline()
-        assert pipeline._model == "claude-sonnet-4-6"
+        assert pipeline._model == DEFAULT_MODEL
         assert pipeline._concurrency == 4
         assert pipeline._max_concurrent == 3
 
     @pytest.mark.asyncio
     async def test_pipeline_custom_params(self) -> None:
         pipeline = Pipeline(
-            model="claude-opus-4-6",
+            model="claude-opus-5-5",
             api_key="test-key",
             user_agent="Custom custom@test.com",
             cache_dir="/tmp/cache",
@@ -392,7 +393,7 @@ class TestPipelineIntegration:
             concurrency=8,
             max_concurrent=5,
         )
-        assert pipeline._model == "claude-opus-4-6"
+        assert pipeline._model == "claude-opus-5-5"
         assert pipeline._concurrency == 8
         assert pipeline._max_concurrent == 5
         assert pipeline._db_path is None
@@ -455,8 +456,12 @@ class TestDeduplicateAmendmentSignals:
         result = _deduplicate_amendment_signals(signals)
         assert len(result) == 2
 
-    def test_duplicate_keeps_most_recent(self) -> None:
-        """When 10-K and 10-K/A produce the same signal, keep the amendment."""
+    def test_duplicate_keeps_earliest_public(self) -> None:
+        """When 10-K and 10-K/A produce the same signal, keep the original.
+
+        The original is when the information became public; keeping the
+        amendment would date the signal weeks after it was tradeable.
+        """
         original = self._make_signal(
             timestamp=datetime(2024, 11, 1, tzinfo=UTC),
             source_filing="https://sec.gov/10-K",
@@ -475,9 +480,9 @@ class TestDeduplicateAmendmentSignals:
                 "_period_of_report": "2024-09-30",
             },
         )
-        result = _deduplicate_amendment_signals([original, amendment])
+        result = _deduplicate_amendment_signals([amendment, original])
         assert len(result) == 1
-        assert result[0].source_filing == "https://sec.gov/10-K-A"
+        assert result[0].source_filing == "https://sec.gov/10-K"
 
     def test_different_signal_types_not_deduped(self) -> None:
         """Signals with different types should both be kept."""
@@ -632,7 +637,7 @@ class TestConcurrentFilingDownloads:
 
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -686,7 +691,7 @@ class TestConcurrentFilingDownloads:
         mock_response = AsyncMock(return_value=[])
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -736,7 +741,7 @@ class TestConcurrentFilingDownloads:
         mock_response = AsyncMock(return_value=[])
         with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 api_key="test-key",
                 user_agent="Test test@example.com",
                 cache_dir=None,
@@ -751,3 +756,75 @@ class TestConcurrentFilingDownloads:
             )
         # Pipeline completes without raising
         assert isinstance(collection, object)
+
+
+class TestPipelineRegressions:
+    @pytest.mark.asyncio
+    async def test_user_agent_is_required(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from alphasig.exceptions import ConfigurationError
+
+        monkeypatch.delenv("ALPHASIG_USER_AGENT", raising=False)
+        pipeline = Pipeline(api_key="k", cache_dir=None, db_path=None)
+        with pytest.raises(ConfigurationError, match="User-Agent"):
+            await pipeline.extract(tickers=["AAPL"], store=False)
+
+    def test_user_agent_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ALPHASIG_USER_AGENT", "Env User env@example.com")
+        assert Pipeline()._user_agent == "Env User env@example.com"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_llm_client_closed_and_signals_stamped(self) -> None:
+        respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+            json={"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple"}}
+        )
+        respx.get("https://data.sec.gov/submissions/CIK0000320193.json").respond(
+            json={
+                "name": "Apple Inc.",
+                "filings": {
+                    "recent": {
+                        "accessionNumber": ["0000320193-24-000123"],
+                        "form": ["10-K"],
+                        "filingDate": ["2024-11-01"],
+                        "reportDate": ["2024-09-28"],
+                        "primaryDocument": ["aapl-20240928.htm"],
+                        "acceptanceDateTime": ["2024-11-01T18:04:43.000Z"],
+                    }
+                },
+            }
+        )
+        filler = "Apple relies on TSMC for chips and on Foxconn for assembly. " * 12
+        respx.get(url__startswith="https://www.sec.gov/Archives/").respond(
+            text=f"<html><body><p><b>Item 1. Business</b></p><p>{filler}</p></body></html>"
+        )
+        reply = AsyncMock(
+            return_value=[
+                {"target": "TSM", "relation": "depends_on", "confidence": 0.9}
+            ]
+        )
+        close = AsyncMock()
+        with (
+            patch("alphasig.llm.LLMClient.extract_json", new=reply),
+            patch("alphasig.llm.LLMClient.aclose", new=close),
+        ):
+            collection = await Pipeline(
+                api_key="k",
+                user_agent="Test test@example.com",
+                cache_dir=None,
+                db_path=None,
+            ).extract(
+                tickers=["AAPL"],
+                filing_types=["10-K"],
+                lookback_years=5,
+                engines=["supply_chain"],
+                store=False,
+            )
+        close.assert_awaited_once()
+        (sig,) = list(collection)
+        assert sig.timestamp == datetime(2024, 11, 1, 22, 4, 43, tzinfo=UTC)
+        assert sig.source_filing.endswith(
+            "/320193/000032019324000123/aapl-20240928.htm"
+        )
+        assert sig.metadata["_filing_accession"] == "0000320193-24-000123"

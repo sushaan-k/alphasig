@@ -8,12 +8,13 @@ corresponding :class:`Signal` objects.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
-from alphasig.engines.base import BaseEngine
+from alphasig.engines.base import BaseEngine, json_objects
 from alphasig.llm import LLMClient
 from alphasig.models import (
     FilingSection,
@@ -34,12 +35,16 @@ mentioned.
 
 For each relationship return a JSON object with these fields:
 - source: the ticker of the company that filed (provided to you)
-- target: the name of the other company (use the ticker if you know it,
-  otherwise use the company name as written in the filing)
+- target: the other company -- its upper-case stock ticker if it is
+  publicly traded and you know it (e.g. "TSM"), otherwise its name as
+  written in the filing
 - relation: one of "depends_on", "supplies_to", "partners_with"
 - context: a short phrase describing what the relationship is about
   (e.g. "semiconductor manufacturing", "cloud hosting")
 - confidence: your confidence in the extraction, 0.0 to 1.0
+- exposure: only if the filing states a concentration figure for this
+  relationship (e.g. "accounted for 22% of net sales"), that share as a
+  fraction between 0 and 1 (0.22); otherwise null.  Never estimate it.
 
 Return a JSON array.  If you find no relationships, return [].
 """
@@ -78,36 +83,29 @@ class SupplyChainEngine(BaseEngine):
             )
             return []
 
+        # Sections are independent; the LLM client bounds concurrency.
+        responses = await asyncio.gather(
+            *(_scan_section(section, llm) for section in target_sections)
+        )
         edges: list[SupplyChainEdge] = []
-        for section in target_sections:
-            # Truncate very long sections to stay within context limits
-            text = section.text[:50_000]
-            user_msg = (
-                f"Company ticker: {section.ticker}\n"
-                f"Filing type: {section.filing_type.value}\n"
-                f"Section: {section.section_name}\n\n"
-                f"--- BEGIN FILING TEXT ---\n{text}\n--- END FILING TEXT ---"
-            )
-
-            raw_items = await llm.extract_json(
-                _SYSTEM_PROMPT, user_msg, temperature=0.0
-            )
-            if not isinstance(raw_items, list):
-                raw_items = [raw_items]
-
-            for item in raw_items:
+        for section, raw_items in zip(target_sections, responses, strict=True):
+            for item in json_objects(raw_items):
+                target = str(item.get("target") or "").strip()
+                if not target or target.upper() == section.ticker.upper():
+                    continue
                 try:
                     edge = SupplyChainEdge(
                         source=section.ticker,
-                        target=str(item.get("target", "")),
+                        target=target,
                         relation=RelationType(item.get("relation", "depends_on")),
                         context=str(item.get("context", "")),
                         confidence=float(item.get("confidence", 0.5)),
+                        exposure=_parse_exposure(item.get("exposure")),
                         filing_type=section.filing_type,
                         filed_date=section.filed_date,
                     )
                     edges.append(edge)
-                except (ValueError, KeyError) as exc:
+                except (ValueError, KeyError, TypeError) as exc:
                     logger.warning(
                         "supply_chain_edge_parse_error",
                         error=str(exc),
@@ -123,7 +121,7 @@ class SupplyChainEngine(BaseEngine):
                 seen.add(key)
                 unique_edges.append(e)
 
-        signals = _edges_to_signals(unique_edges)
+        signals = _edges_to_signals(unique_edges, target_sections[0])
         logger.info(
             "supply_chain_extracted",
             ticker=sections[0].ticker if sections else "?",
@@ -133,17 +131,42 @@ class SupplyChainEngine(BaseEngine):
         return signals
 
 
-def _edges_to_signals(edges: list[SupplyChainEdge]) -> list[Signal]:
+def _parse_exposure(value: Any) -> float | None:
+    """Coerce a stated concentration share to a 0-1 fraction, else ``None``.
+
+    Values in (1, 100] are read as percentages ("22" -> 0.22); anything
+    unparseable or out of range is dropped rather than discarding the edge.
+    """
+    try:
+        share = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 1.0 < share <= 100.0:
+        share /= 100.0
+    return share if 0.0 <= share <= 1.0 else None
+
+
+async def _scan_section(section: FilingSection, llm: LLMClient) -> Any:
+    # Truncate very long sections to stay within context limits
+    text = section.text[:50_000]
+    user_msg = (
+        f"Company ticker: {section.ticker}\n"
+        f"Filing type: {section.filing_type.value}\n"
+        f"Section: {section.section_name}\n\n"
+        f"--- BEGIN FILING TEXT ---\n{text}\n--- END FILING TEXT ---"
+    )
+    return await llm.extract_json(_SYSTEM_PROMPT, user_msg)
+
+
+def _edges_to_signals(
+    edges: list[SupplyChainEdge], section: FilingSection
+) -> list[Signal]:
     """Convert supply-chain edges into standardised Signal objects."""
     signals: list[Signal] = []
     for edge in edges:
         signals.append(
             Signal(
-                timestamp=datetime.combine(
-                    edge.filed_date,
-                    datetime.min.time(),
-                    tzinfo=UTC,
-                ),
+                timestamp=section.available_at,
                 ticker=edge.source,
                 signal_type=SignalType.SUPPLY_CHAIN,
                 direction=SignalDirection.NEUTRAL,
@@ -159,7 +182,9 @@ def _edges_to_signals(edges: list[SupplyChainEdge]) -> list[Signal]:
                     "target": edge.target,
                     "relation": edge.relation.value,
                     "edge_context": edge.context,
+                    "exposure": edge.exposure,
                     "filing_type": edge.filing_type.value,
+                    "filed_date": edge.filed_date.isoformat(),
                 },
             )
         )

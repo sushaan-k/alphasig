@@ -17,11 +17,14 @@ from typing import Any
 import structlog
 
 from alphasig.models import (
+    FilingType,
+    RelationType,
     Severity,
     Signal,
     SignalDirection,
     SignalType,
     SupplyChainEdge,
+    as_utc,
 )
 from alphasig.sectors import Sector, classify_sector
 
@@ -137,7 +140,11 @@ class SignalCollection:
         return SignalCollection([s for s in self._signals if s.confidence >= threshold])
 
     def between(self, start: datetime, end: datetime) -> SignalCollection:
-        """Return signals within a time range (inclusive)."""
+        """Return signals within a time range (inclusive).
+
+        Naive datetimes are interpreted as UTC, matching :class:`Signal`.
+        """
+        start, end = as_utc(start), as_utc(end)
         return SignalCollection(
             [s for s in self._signals if start <= s.timestamp <= end]
         )
@@ -210,8 +217,10 @@ class SignalCollection:
                 signal for signal in results if signal.direction == sig_direction
             ]
         if start is not None:
+            start = as_utc(start)
             results = [signal for signal in results if signal.timestamp >= start]
         if end is not None:
+            end = as_utc(end)
             results = [signal for signal in results if signal.timestamp <= end]
         if min_strength is not None:
             results = [signal for signal in results if signal.strength >= min_strength]
@@ -249,25 +258,25 @@ class SignalCollection:
 
     def supply_chain_edges(self) -> list[SupplyChainEdge]:
         """Extract supply-chain edges from supply_chain signals."""
-        from alphasig.models import FilingType, RelationType
-
         edges: list[SupplyChainEdge] = []
         for s in self.by_type(SignalType.SUPPLY_CHAIN):
+            meta = s.metadata
             try:
                 edges.append(
                     SupplyChainEdge(
                         source=s.ticker,
-                        target=s.metadata.get("target", ""),
-                        relation=RelationType(s.metadata.get("relation", "depends_on")),
-                        context=s.metadata.get("edge_context", ""),
+                        target=meta.get("target", ""),
+                        relation=RelationType(meta.get("relation", "depends_on")),
+                        context=meta.get("edge_context", ""),
                         confidence=s.confidence,
+                        exposure=meta.get("exposure"),
                         filing_type=FilingType(
-                            s.metadata.get("filing_type", FilingType.TEN_K.value)
+                            meta.get("filing_type", FilingType.TEN_K.value)
                         ),
-                        filed_date=s.timestamp.date(),
+                        filed_date=meta.get("filed_date") or s.timestamp.date(),
                     )
                 )
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
                 continue
         return edges
 
