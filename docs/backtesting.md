@@ -4,12 +4,12 @@ alphasig outputs structured, timestamped signals designed for integration with q
 
 ## Parquet Export
 
-The primary export format for backtesting is Parquet, which is natively supported by Lean, Zipline, and most pandas-based backtest systems.
+The primary export format for backtesting is Parquet, which pandas, polars and DuckDB read directly.
 
 ```python
 from alphasig import Pipeline
 
-pipeline = Pipeline(model="claude-sonnet-4-6")
+pipeline = Pipeline(user_agent="Your Name your@email.com")
 signals = await pipeline.extract(
     tickers=["AAPL", "MSFT"],
     filing_types=["10-K", "10-Q"],
@@ -31,20 +31,31 @@ import pandas as pd
 
 df = pd.read_parquet("all_signals.parquet")
 
-# Pivot to get daily signal scores by ticker
+# Bucket by the US/Eastern calendar day the filing became public
+df["day"] = df["timestamp"].dt.tz_convert("America/New_York").dt.normalize()
 daily = df.pivot_table(
-    index="timestamp",
+    index="day",
     columns="ticker",
     values="strength",
     aggfunc="mean",
 )
 ```
 
+Filings accepted after the 16:00 ET close are only tradeable at the next
+session; shift those rows forward before joining to daily bars:
+
+```python
+after_close = df["timestamp"].dt.tz_convert("America/New_York").dt.hour >= 16
+df.loc[after_close, "day"] += pd.offsets.BDay(1)
+```
+
 ## Signal Timing
 
-All signal timestamps correspond to the SEC filing date (not the period-of-report date). This is the date the information became publicly available, which is the relevant date for backtesting.
+Signal timestamps are the moment the source filing became public: EDGAR's acceptance time, converted to UTC (EDGAR reports it in Eastern time). When the acceptance time is unavailable, 17:30 ET on the filing date is used -- EDGAR assigns filings accepted after 17:30 to the next business day, so that fallback never precedes the real release. The period-of-report date is kept in `metadata["_period_of_report"]` but is never used as the timestamp.
 
-Signals are point-in-time: they reflect only information available at the filing date. No look-ahead bias is introduced.
+Amendments (`10-K/A`, `10-Q/A`) are not fetched: the original filing is what the market saw first. If the same signal does appear twice within a filing family, the earliest copy is kept.
+
+When ranking historically, pass `as_of` (or `--as-of`): signals published after that time are excluded rather than scored.
 
 ## Combining Signal Types
 
@@ -73,6 +84,7 @@ without re-running EDGAR or LLM extraction:
 alphasig rank --db alphasig.duckdb --min-confidence 0.8 --limit 25
 alphasig rank --db alphasig.duckdb --format json --output ranking.json
 alphasig rank --db alphasig.duckdb --as-of 2025-01-15T00:00:00Z
+alphasig rank --db alphasig.duckdb --as-of 2025-01-15T00:00:00Z --half-life 90
 ```
 
 The ranking uses confidence-weighted directional strength:
@@ -80,7 +92,10 @@ The ranking uses confidence-weighted directional strength:
 - bullish signals contribute positive exposure
 - bearish signals contribute negative exposure
 - neutral signals contribute gross exposure but not net direction
-- `--as-of` evaluates each signal's configured decay before scoring
+- `--as-of` scores the store as of that time: later signals are excluded and
+  each signal's configured `decay_rate` is applied
+- `--half-life DAYS` decays every signal with that half-life instead
+  (implies `--as-of` now when not given)
 
 The same logic is available from Python:
 

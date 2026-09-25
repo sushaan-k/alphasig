@@ -6,7 +6,7 @@ All alphasig extraction engines emit signals conforming to a universal schema. T
 
 | Field | Type | Description |
 |---|---|---|
-| `timestamp` | `datetime` (UTC) | Filing date |
+| `timestamp` | `datetime` (UTC) | When the source filing became public (EDGAR acceptance time) |
 | `ticker` | `str` | Company ticker symbol |
 | `signal_type` | `enum` | One of: `supply_chain`, `risk_change`, `m_and_a`, `tone_shift` |
 | `direction` | `enum` | `bullish`, `bearish`, or `neutral` |
@@ -20,7 +20,7 @@ All alphasig extraction engines emit signals conforming to a universal schema. T
 ## Signal Types
 
 ### `supply_chain`
-Metadata includes: `target` (supplier/partner name), `relation` (depends_on, supplies_to, partners_with), `edge_context`.
+Metadata includes: `target` (supplier/partner ticker or name), `relation` (depends_on, supplies_to, partners_with), `edge_context`, `exposure` (stated concentration share 0-1, or `null`), `filing_type`, `filed_date`.
 
 ### `risk_change`
 Metadata includes: `change_type` (NEW, REMOVED, ESCALATED, DE_ESCALATED), `severity` (LOW, MEDIUM, HIGH, CRITICAL), `language_shift`, `current_filing`, `previous_filing`.
@@ -29,7 +29,10 @@ Metadata includes: `change_type` (NEW, REMOVED, ESCALATED, DE_ESCALATED), `sever
 Metadata includes: `indicator_count`, `categories` (list of detected M&A categories), `indicators` (detailed list).
 
 ### `tone_shift`
-Metadata includes: `topic`, `current_tone`, `previous_tone`, `key_phrases`.
+Metadata includes: `topic`, `current_tone`, `previous_tone`, `key_phrases`, `current_filing`, `previous_filing`; baseline signals (no prior filing) also set `is_baseline: true`.
+
+### Pipeline provenance
+Signals produced by `Pipeline.extract` also carry `_filing_accession`, `_filing_type` and `_period_of_report` in `metadata`, and `source_filing` is the EDGAR document URL.
 
 ## Output Formats
 
@@ -37,7 +40,7 @@ Signals can be exported to:
 - **Parquet** -- `signals.to_parquet("path.parquet")`
 - **CSV** -- `signals.to_csv("path.csv")`
 - **REST API** -- `signals.to_api(port=8080)`
-- **DuckDB** -- Automatic via `SignalStore`
+- **DuckDB** -- Automatic via `SignalStore` (re-inserting an identical signal is a no-op)
 
 ## Ranking Reports
 
@@ -49,7 +52,7 @@ Stored signals can also be transformed into ticker-level ranking reports with
 | `score` | Average confidence-weighted directional strength, negative for bearish exposure |
 | `gross_score` | Average confidence-weighted absolute exposure |
 | `signal_count` | Number of signals contributing to the ticker |
-| `avg_strength` | Average effective strength, including decay when an `as_of` timestamp is used |
+| `avg_strength` | Average effective strength, including decay when `as_of` / `half_life_days` is used |
 | `avg_confidence` | Average extraction confidence |
 | `top_contexts` | Highest-weight signal explanations for analyst review |
 | `related_tickers` | Count of related tickers mentioned by contributing signals |

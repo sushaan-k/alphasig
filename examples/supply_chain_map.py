@@ -6,6 +6,7 @@ at key suppliers like TSMC.
 
 Usage:
     export ANTHROPIC_API_KEY="sk-ant-..."
+    export ALPHASIG_USER_AGENT="Your Name you@example.com"
     python examples/supply_chain_map.py
 """
 
@@ -20,8 +21,8 @@ TICKERS = ["AAPL", "NVDA", "AMD", "QCOM", "AVGO", "INTC"]
 
 async def main() -> None:
     pipeline = Pipeline(
-        model="claude-sonnet-4-6",
-        user_agent="alphasig-example research@example.com",
+        # Model and EDGAR User-Agent come from ALPHASIG_MODEL (optional) and
+        # ALPHASIG_USER_AGENT ("Your Name you@example.com", required by SEC).
         cache_dir="./edgar_cache",
         db_path=None,  # Don't persist for this example
     )
@@ -39,9 +40,9 @@ async def main() -> None:
     graph = signals.supply_chain_graph()
     print(f"\nGraph: {len(graph.nodes)} nodes, {graph.edge_count} edges")
 
-    # Who depends on TSMC?
-    tsmc_exposure = graph.exposure("TSMC")
-    print("\nTSMC exposure analysis:")
+    # Who depends on TSMC?  Public counterparties are keyed by ticker (TSM).
+    tsmc_exposure = graph.exposure("TSM")
+    print("\nTSMC (TSM) exposure analysis:")
     print(f"  Direct dependents: {tsmc_exposure['direct_dependents']}")
     print(f"  Transitive dependents: {tsmc_exposure['transitive_dependents']}")
     print(f"  Exposure score: {tsmc_exposure['exposure_score']:.2%}")
@@ -52,7 +53,7 @@ async def main() -> None:
         print(f"  {name}: {degree} connections")
 
     # Check for paths
-    for source, target in [("AAPL", "TSMC"), ("NVDA", "TSMC")]:
+    for source, target in [("AAPL", "TSM"), ("NVDA", "TSM")]:
         path = graph.shortest_path(source, target)
         if path:
             print(f"\n  Path {source} -> {target}: {' -> '.join(path)}")

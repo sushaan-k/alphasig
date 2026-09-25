@@ -6,6 +6,7 @@ AAPL, MSFT, GOOGL, META, AMZN, NVDA, and TSLA.
 
 Usage:
     export ANTHROPIC_API_KEY="sk-ant-..."
+    export ALPHASIG_USER_AGENT="Your Name you@example.com"
     python examples/mag7_analysis.py
 """
 
@@ -20,8 +21,8 @@ MAG7 = ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA"]
 
 async def main() -> None:
     pipeline = Pipeline(
-        model="claude-sonnet-4-6",
-        user_agent="alphasig-example research@example.com",
+        # Model and EDGAR User-Agent come from ALPHASIG_MODEL (optional) and
+        # ALPHASIG_USER_AGENT ("Your Name you@example.com", required by SEC).
         cache_dir="./edgar_cache",
         db_path="mag7.duckdb",
     )

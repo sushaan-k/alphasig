@@ -205,7 +205,7 @@ from alphasig import Pipeline, EDGAR, Signals
 
 # Initialize
 edgar = EDGAR(api_key="...", cache_dir="./edgar_cache")
-pipeline = Pipeline(model="claude-sonnet-4-6")
+pipeline = Pipeline(user_agent="Jane Doe jane@example.com")
 
 # Extract signals from a specific company
 signals = await pipeline.extract(

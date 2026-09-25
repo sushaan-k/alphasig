@@ -21,7 +21,7 @@
 - Supply-chain graph construction for second-order exposure analysis
 - Parquet, DuckDB, API, and webhook outputs for downstream workflows
 
-Every quant fund scrapes SEC filings. Sentiment analysis on 10-K/10-Q text is a solved, commoditized problem with zero alpha left. **alphasig** does something different: it extracts *causal, structural relationships* buried in filings -- supply chain dependencies, risk factor escalations, M&A language patterns, and topic-level management tone shifts -- and compiles them into timestamped, backtestable signals.
+Every quant fund scrapes SEC filings, and sentiment scoring of 10-K/10-Q text is commoditized. **alphasig** does something different: it extracts *causal, structural relationships* buried in filings -- supply chain dependencies, risk factor escalations, M&A language patterns, and topic-level management tone shifts -- and compiles them into timestamped, backtestable signals.
 
 ## Why This Exists
 
@@ -31,7 +31,7 @@ Research shows ([Lazy Prices, Cohen et al. 2020](https://papers.ssrn.com/sol3/pa
 
 ## Showcase
 
-The built-in supply-chain graph utilities render dependencies as a directed network where **nodes represent companies** and **edges represent disclosed supplier/customer relationships**. Edge weights encode exposure magnitude extracted from filings (e.g., "40% of revenue from top supplier"). This enables second-order risk propagation: when TSMC faces a disruption, immediately identify all downstream companies with concentrated exposure.
+The built-in supply-chain graph utilities render dependencies as a directed network where **nodes represent companies** and **edges represent disclosed supplier/customer relationships**. Each edge carries the relation, its context, the extraction confidence and -- only when the filing states one -- the concentration share (e.g. "customer accounted for 22% of net sales" -> `exposure=0.22`), which also sets the edge width in `graph.plot()`. This enables second-order risk propagation: when TSMC faces a disruption, identify the companies that depend on it directly or one hop removed.
 
 ## Architecture
 
@@ -64,12 +64,16 @@ graph TD
 
 ## Signal Types
 
-| Type | Example | Typical Lead Time |
+| Type | Example | Source |
 |---|---|---|
-| `supply_chain` | "Apple adds TSMC concentration risk" | 5–10 trading days |
-| `risk_change` | "ESCALATED: Regulatory scrutiny in Item 1A" | 1–3 trading days |
-| `m_and_a` | "Strategic alternatives language in MD&A" | 10–30 trading days |
-| `tone_shift` | "Management tone on margins shifted hedging → confident" | Next earnings |
+| `supply_chain` | "AAPL depends_on TSM (advanced-node fabrication)" | Business, Risk Factors, MD&A |
+| `risk_change` | "ESCALATED: Regulatory scrutiny in Item 1A" | Risk Factors vs. prior filing of the same form |
+| `m_and_a` | "Strategic alternatives language in MD&A" | Every parsed section (whole document for 8-Ks) |
+| `tone_shift` | "Management tone on margins shifted hedging → confident" | MD&A vs. prior filing of the same form |
+
+Every signal is timestamped with the moment its filing became public (the
+EDGAR acceptance time, in UTC), never the period end, so signals can be joined
+to prices point-in-time without look-ahead bias.
 
 ## Quick Start
 
@@ -87,8 +91,7 @@ from alphasig import Pipeline
 
 async def main():
     pipeline = Pipeline(
-        model="claude-sonnet-4-6",
-        user_agent="Your Name your@email.com",
+        user_agent="Your Name your@email.com",  # required by SEC EDGAR
     )
 
     signals = await pipeline.extract(
@@ -103,9 +106,9 @@ async def main():
     for sig in bearish:
         print(f"[{sig.ticker}] {sig.context}")
 
-    # Build supply chain graph
+    # Build supply chain graph (public counterparties are keyed by ticker)
     graph = signals.supply_chain_graph()
-    exposure = graph.exposure("TSMC")
+    exposure = graph.exposure("TSM")
     print(f"Companies exposed to TSMC: {exposure['direct_dependents']}")
 
     # Export for backtesting
@@ -136,6 +139,9 @@ print(sector_report.to_json())
 ### CLI
 
 ```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export ALPHASIG_USER_AGENT="Your Name your@email.com"
+
 # Extract signals
 alphasig extract --tickers AAPL MSFT --lookback 3 --output signals.parquet
 
@@ -146,6 +152,9 @@ alphasig query --ticker AAPL --type risk_change --min-strength 0.7
 alphasig rank --db alphasig.duckdb --min-confidence 0.8 --format markdown \
   --output reports/ranking.md
 
+# Point-in-time ranking with a 90-day signal half-life
+alphasig rank --as-of 2025-06-30T20:00:00Z --half-life 90
+
 # Summarize directional exposure by sector
 alphasig sectors --db alphasig.duckdb --exclude-unknown --format json \
   --output reports/sector_exposure.json
@@ -155,9 +164,12 @@ alphasig serve --port 8080
 ```
 
 `rank` is fully offline: it reads the local DuckDB signal store, scores each
-ticker by confidence-weighted directional strength, includes signal decay when
-`--as-of` is supplied, and can emit an analyst-friendly table, JSON, or
-Markdown report.
+ticker by confidence-weighted directional strength, and can emit an
+analyst-friendly table, JSON, or Markdown report. `--as-of` scores the store as
+it stood at that time (later signals are excluded) and `--half-life` decays
+each signal's strength exponentially with the given half-life in days.
+Re-running `extract` over overlapping filings does not duplicate stored
+signals.
 
 `sectors` uses the same offline scoring model grouped through the built-in
 sector map, making it useful for spotting concentrated bullish or bearish
@@ -166,17 +178,44 @@ portfolio exposure before a backtest or daily review.
 ### REST API
 
 ```bash
-curl http://localhost:8080/signals?ticker=AAPL&min_strength=0.7
-curl http://localhost:8080/signals/summary
+curl "http://localhost:8080/signals?ticker=AAPL&min_strength=0.7"
+curl "http://localhost:8080/signals/summary"
+curl "http://localhost:8080/signals/AAPL?signal_type=risk_change"
 ```
+
+The server needs the `api` extra: `pip install "alphasig[api]"`.
+
+### Webhooks
+
+```python
+from alphasig import SignalDirection
+from alphasig.output.webhook import WebhookSender
+
+sender = WebhookSender(
+    "https://hooks.example.com/alphasig",
+    min_strength=0.7,
+    directions=[SignalDirection.BEARISH],
+)
+await sender.send_batch(signals)  # one POST with every qualifying signal
+```
+
+Network errors, 429s and 5xx responses are retried with backoff; 4xx
+responses are not. Only the webhook host is logged, since webhook URLs often
+embed a secret.
 
 ## Configuration
 
-alphasig reads the Anthropic API key from the `ANTHROPIC_API_KEY` environment variable. EDGAR requires a User-Agent with a contact email (SEC policy).
+| Setting | Environment variable | Notes |
+|---|---|---|
+| Anthropic API key | `ANTHROPIC_API_KEY` | Or `Pipeline(api_key=...)` |
+| EDGAR User-Agent | `ALPHASIG_USER_AGENT` | Required: `"Name email@domain"` per the SEC fair-access policy. Or `Pipeline(user_agent=...)` / `--user-agent` |
+| Model | `ALPHASIG_MODEL` | Default `claude-sonnet-5`. Or `Pipeline(model=...)` / `--model` |
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+EDGAR requests share one connection pool and are spaced to stay under the
+SEC's 10 requests/second limit, with backoff on 429/5xx that honours
+`Retry-After`. Downloaded filings are cached in `./edgar_cache` (disable with
+`cache_dir=None`). LLM calls reuse a cached system prompt per engine and are
+retried by the Anthropic SDK on rate limits and overload.
 
 ## Signal Schema
 
@@ -184,7 +223,7 @@ Every signal follows a universal schema for backtesting compatibility:
 
 ```python
 Signal(
-    timestamp=datetime,          # Filing date (UTC)
+    timestamp=datetime,          # When the filing became public (UTC)
     ticker="AAPL",               # Company ticker
     signal_type="risk_change",   # supply_chain | risk_change | m_and_a | tone_shift
     direction="bearish",         # bullish | bearish | neutral
@@ -210,6 +249,8 @@ alphasig/
 │   ├── signals.py           # SignalCollection with filtering/export
 │   ├── graph.py             # Supply chain NetworkX graph
 │   ├── storage.py           # DuckDB signal store
+│   ├── reporting.py         # Offline ticker / sector ranking reports
+│   ├── sectors.py           # Built-in sector map
 │   ├── engines/
 │   │   ├── supply_chain.py  # Supply chain extraction
 │   │   ├── risk_differ.py   # Risk factor diffing
@@ -221,6 +262,7 @@ alphasig/
 │       └── webhook.py       # Webhook notifications
 ├── tests/                   # pytest suite with mocked EDGAR/LLM
 ├── examples/
+│   ├── demo.py              # Offline walkthrough (no API key needed)
 │   ├── mag7_analysis.py     # Analyse Magnificent 7
 │   ├── supply_chain_map.py  # Visualise supply chain graph
 │   └── risk_monitor.py      # Monitor risk factor changes
@@ -245,11 +287,18 @@ For EDGAR extraction and portfolio-scale signal analysis, see `examples/`.
 ```bash
 git clone https://github.com/sushaan-k/alphasig.git
 cd alphasig
-pip install -e ".[dev]"
-pytest -v
-ruff check src/ tests/
-mypy src/alphasig/
+uv sync --extra dev --extra api --extra viz   # or: pip install -e ".[dev,api,viz]"
+uv run pytest
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run mypy src/alphasig/
 ```
+
+The test suite mocks EDGAR and the LLM and refuses real network access.
+
+Upgrading from 0.1.x? The import package and CLI were renamed from `sigint`
+to `alphasig` (the `sigint` command remains as an alias); see
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Research References
 

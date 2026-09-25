@@ -6,6 +6,7 @@ monitoring of portfolio risk exposure.
 
 Usage:
     export ANTHROPIC_API_KEY="sk-ant-..."
+    export ALPHASIG_USER_AGENT="Your Name you@example.com"
     python examples/risk_monitor.py
 """
 
@@ -20,8 +21,8 @@ WATCHLIST = ["AAPL", "MSFT", "GOOGL", "META", "AMZN"]
 
 async def main() -> None:
     pipeline = Pipeline(
-        model="claude-sonnet-4-6",
-        user_agent="alphasig-example research@example.com",
+        # Model and EDGAR User-Agent come from ALPHASIG_MODEL (optional) and
+        # ALPHASIG_USER_AGENT ("Your Name you@example.com", required by SEC).
         cache_dir="./edgar_cache",
         db_path="risk_monitor.duckdb",
     )
