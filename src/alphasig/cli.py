@@ -133,6 +133,29 @@ def main(verbose: int, json_logs: bool) -> None:
     default=None,
     help="With --calibrate, drop signals whose calibrated confidence is lower.",
 )
+@click.option(
+    "--incremental",
+    is_flag=True,
+    help=(
+        "Skip (filing, engine) jobs already recorded in --db, so a re-run "
+        "resumes after a crash or picks up only new filings."
+    ),
+)
+@click.option(
+    "--llm-cache-dir",
+    default=None,
+    help=(
+        "Cache LLM responses here, keyed by model, prompt and parameters; "
+        "re-runs reuse them instead of calling the API again."
+    ),
+)
+@click.option(
+    "--llm-concurrency",
+    type=click.IntRange(min=1),
+    default=8,
+    show_default=True,
+    help="Maximum in-flight LLM requests.",
+)
 def extract(
     extra_tickers: tuple[str, ...],
     tickers: tuple[str, ...],
@@ -146,6 +169,9 @@ def extract(
     output: str | None,
     calibrate: bool,
     drop_below: float | None,
+    incremental: bool,
+    llm_cache_dir: str | None,
+    llm_concurrency: int,
 ) -> None:
     """Extract causal signals from SEC filings for TICKER(s)."""
     from alphasig.jev import JevCalibrator
@@ -176,6 +202,8 @@ def extract(
         cache_dir=cache_dir,
         db_path=db,
         calibrator=calibrator,
+        llm_concurrency=llm_concurrency,
+        llm_cache_dir=llm_cache_dir,
     )
 
     async def _run() -> SignalCollection:
@@ -185,6 +213,7 @@ def extract(
                 filing_types=list(filing_types),
                 lookback_years=lookback,
                 engines=list(engines),
+                incremental=incremental,
             )
         finally:
             if calibrator is not None:

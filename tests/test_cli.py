@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -507,6 +508,57 @@ class TestCliRegressions:
         assert result.exit_code == 0, result.output
         tickers = mock_pipeline_cls.return_value.extract.call_args.kwargs["tickers"]
         assert sorted(tickers) == ["AAPL", "MSFT"]
+
+    @patch("alphasig.pipeline.Pipeline")
+    def test_incremental_and_llm_options_reach_the_pipeline(
+        self,
+        mock_pipeline_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+        tmp_path: Path,
+    ) -> None:
+        mock_pipeline_cls.return_value.extract = AsyncMock(
+            return_value=SignalCollection(mock_signals)
+        )
+        cache = str(tmp_path / "llm")
+        result = runner.invoke(
+            main,
+            [
+                "extract",
+                "AAPL",
+                "--incremental",
+                "--llm-cache-dir",
+                cache,
+                "--llm-concurrency",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        init = mock_pipeline_cls.call_args.kwargs
+        assert (init["llm_cache_dir"], init["llm_concurrency"]) == (cache, 3)
+        call = mock_pipeline_cls.return_value.extract.call_args.kwargs
+        assert call["incremental"] is True
+
+    @patch("alphasig.pipeline.Pipeline")
+    def test_llm_defaults(
+        self,
+        mock_pipeline_cls: MagicMock,
+        runner: CliRunner,
+        mock_signals: list[Signal],
+    ) -> None:
+        mock_pipeline_cls.return_value.extract = AsyncMock(
+            return_value=SignalCollection(mock_signals)
+        )
+        result = runner.invoke(main, ["extract", "AAPL"])
+        assert result.exit_code == 0, result.output
+        init = mock_pipeline_cls.call_args.kwargs
+        assert (init["llm_cache_dir"], init["llm_concurrency"]) == (None, 8)
+        call = mock_pipeline_cls.return_value.extract.call_args.kwargs
+        assert call["incremental"] is False
+
+    def test_llm_concurrency_must_be_positive(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["extract", "AAPL", "--llm-concurrency", "0"])
+        assert result.exit_code == 2
 
     def test_unknown_engine_is_a_usage_error(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["extract", "AAPL", "-e", "sentiment"])

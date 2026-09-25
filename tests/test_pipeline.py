@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 import respx
 
 from alphasig.exceptions import ExtractionError, PipelineError
+from alphasig.jev import JevCalibrator
 from alphasig.llm import DEFAULT_MODEL
-from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.models import FilingSection, Signal, SignalDirection, SignalType
 from alphasig.pipeline import (
     Pipeline,
     _deduplicate_amendment_signals,
     _resolve_engines,
     _run_engine,
 )
+from alphasig.storage import SignalStore
 
 
 class TestPipelineHelpers:
@@ -828,3 +837,391 @@ class TestPipelineRegressions:
             "/320193/000032019324000123/aapl-20240928.htm"
         )
         assert sig.metadata["_filing_accession"] == "0000320193-24-000123"
+
+
+# ---------------------------------------------------------------------------
+# LLM options and incremental extraction
+# ---------------------------------------------------------------------------
+
+_UA = "Test test@example.com"
+# Supply-chain calls per mocked filing: one per section (Items 1, 1A and 7).
+_SECTIONS = 3
+_CIK_URL = "https://data.sec.gov/submissions/CIK0000320193.json"
+
+
+def _mock_edgar(years: list[int]) -> dict[str, int]:
+    """Serve one 10-K per year (Item 1, 1A and 7); count document fetches."""
+    fetched: dict[str, int] = {}
+    respx.get("https://www.sec.gov/files/company_tickers.json").respond(
+        json={"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple"}}
+    )
+    respx.get(_CIK_URL).respond(
+        json={
+            "name": "Apple Inc.",
+            "filings": {
+                "recent": {
+                    "accessionNumber": [f"0000320193-{y % 100}-000001" for y in years],
+                    "form": ["10-K"] * len(years),
+                    "filingDate": [f"{y}-11-01" for y in years],
+                    "reportDate": [f"{y}-09-28" for y in years],
+                    "primaryDocument": [f"aapl-{y}.htm" for y in years],
+                    "acceptanceDateTime": [f"{y}-11-01T16:30:00.000Z" for y in years],
+                }
+            },
+        }
+    )
+
+    def doc(request: httpx.Request) -> httpx.Response:
+        year = str(request.url).rsplit("-", 1)[1][:4]
+        fetched[year] = fetched.get(year, 0) + 1
+        risks = " ".join(f"Risk {year}-{i} may affect results." for i in range(30))
+        body = (
+            "<html><body>"
+            "<p><b>Item 1. Business</b></p>"
+            f"<p>{'Apple relies on TSMC for chips. ' * 10}</p>"
+            f"<p><b>Item 1A. Risk Factors</b></p><p>{risks}</p>"
+            "<p><b>Item 7. Management's Discussion and Analysis</b></p>"
+            f"<p>{('Fiscal ' + year + ' revenue and margins. ') * 10}</p>"
+            "</body></html>"
+        )
+        return httpx.Response(200, text=body)
+
+    respx.get(url__startswith="https://www.sec.gov/Archives/").mock(side_effect=doc)
+    return fetched
+
+
+def _llm_reply(system: str) -> list[dict[str, object]]:
+    if "securities lawyer" in system:
+        return [
+            {
+                "change_type": "NEW",
+                "risk": "New risk",
+                "severity_estimate": "HIGH",
+                "confidence": 0.8,
+            }
+        ]
+    if "supply-chain" in system:
+        return [{"target": "TSM", "relation": "depends_on", "confidence": 0.9}]
+    return []
+
+
+class _FakeAnthropic:
+    """Stands in for ``anthropic.AsyncAnthropic``; counts calls and peak load."""
+
+    stats: ClassVar[dict[str, int]] = {}
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.messages = self
+
+    async def create(self, **kwargs: object) -> SimpleNamespace:
+        stats = type(self).stats
+        stats["calls"] += 1
+        stats["inflight"] += 1
+        stats["peak"] = max(stats["peak"], stats["inflight"])
+        try:
+            await asyncio.sleep(0.01)
+        finally:
+            stats["inflight"] -= 1
+        system = kwargs["system"][0]["text"]  # type: ignore[index]
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=json.dumps(_llm_reply(system)))],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.fixture
+def fake_anthropic() -> Iterator[dict[str, int]]:
+    import anthropic
+
+    _FakeAnthropic.stats = {"calls": 0, "inflight": 0, "peak": 0}
+    with patch.object(anthropic, "AsyncAnthropic", _FakeAnthropic):
+        yield _FakeAnthropic.stats
+
+
+async def _extract(pipeline: Pipeline, **kwargs: object) -> list[Signal]:
+    options: dict[str, object] = {
+        "tickers": ["AAPL"],
+        "filing_types": ["10-K"],
+        "lookback_years": 5,
+        "engines": ["supply_chain", "risk_differ"],
+        "store": False,
+    }
+    options.update(kwargs)
+    return list(await pipeline.extract(**options))  # type: ignore[arg-type]
+
+
+class TestLLMOptions:
+    @respx.mock
+    async def test_llm_concurrency_bounds_in_flight_requests(
+        self, fake_anthropic: dict[str, int]
+    ) -> None:
+        _mock_edgar([2022, 2023, 2024])
+        pipeline = Pipeline(
+            api_key="k", user_agent=_UA, cache_dir=None, db_path=None, llm_concurrency=1
+        )
+        signals = await _extract(pipeline)
+        assert signals
+        # 3 filings x 3 sections of supply chain + 2 risk diffs, one at a time.
+        assert fake_anthropic["calls"] == 3 * _SECTIONS + 2
+        assert fake_anthropic["peak"] == 1
+
+    def test_llm_concurrency_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="llm_concurrency"):
+            Pipeline(llm_concurrency=0)
+
+    @respx.mock
+    async def test_llm_cache_dir_makes_reruns_free(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        _mock_edgar([2023, 2024])
+        cache = tmp_path / "llm"
+
+        def pipeline() -> Pipeline:
+            return Pipeline(
+                api_key="k",
+                user_agent=_UA,
+                cache_dir=None,
+                db_path=None,
+                llm_cache_dir=str(cache),
+            )
+
+        first = await _extract(pipeline())
+        calls = fake_anthropic["calls"]
+        assert calls > 0
+        second = await _extract(pipeline())
+        assert fake_anthropic["calls"] == calls
+        assert sorted(s.context for s in second) == sorted(s.context for s in first)
+        assert list(cache.rglob("*.json"))
+
+
+class _HalfCalibrator(JevCalibrator):
+    """Sets every confidence to 0.5 without calling Jev."""
+
+    def __init__(self) -> None:
+        super().__init__(client=MagicMock())
+        self.calls = 0
+
+    async def calibrate(
+        self,
+        signals: Sequence[Signal],
+        sections: Sequence[FilingSection],
+        previous_sections: Sequence[FilingSection] | None = None,
+    ) -> list[Signal]:
+        self.calls += 1
+        return [
+            s.model_copy(
+                update={
+                    "confidence": 0.5,
+                    "metadata": {**s.metadata, "confidence_source": "jev"},
+                }
+            )
+            for s in signals
+        ]
+
+
+class TestIncrementalExtraction:
+    """incremental=True records finished jobs and skips them next time."""
+
+    @staticmethod
+    def _pipeline(db: Path, **kwargs: object) -> Pipeline:
+        return Pipeline(
+            api_key="k",
+            user_agent=_UA,
+            cache_dir=None,
+            db_path=str(db),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    @respx.mock
+    async def test_second_run_skips_finished_jobs(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        db = tmp_path / "inc.duckdb"
+        fetched = _mock_edgar([2023, 2024])
+        first = await _extract(self._pipeline(db), store=True, incremental=True)
+        assert first
+        assert fake_anthropic["calls"] == 2 * _SECTIONS + 1  # + one risk diff
+
+        second = await _extract(self._pipeline(db), store=True, incremental=True)
+        assert second == []
+        assert fake_anthropic["calls"] == 2 * _SECTIONS + 1
+        # Nothing left to do: no filing documents were downloaded again.
+        assert fetched == {"2023": 1, "2024": 1}
+
+        with SignalStore(db) as store:
+            assert store.count() == len(first)
+            done = store.completed_extractions()
+        assert set(done) == {
+            ("0000320193-23-000001", "supply_chain"),
+            ("0000320193-23-000001", "risk_differ"),
+            ("0000320193-24-000001", "supply_chain"),
+            ("0000320193-24-000001", "risk_differ"),
+        }
+        latest = done[("0000320193-24-000001", "risk_differ")]
+        assert latest.previous_accession == "0000320193-23-000001"
+        assert latest.signal_count == 1
+        assert done[("0000320193-23-000001", "risk_differ")].signal_count == 0
+
+    @respx.mock
+    async def test_new_filing_runs_only_its_jobs(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        db = tmp_path / "inc.duckdb"
+        _mock_edgar([2022, 2023])
+        await _extract(self._pipeline(db), store=True, incremental=True)
+        calls = fake_anthropic["calls"]
+
+        respx.reset()
+        fetched = _mock_edgar([2022, 2023, 2024])
+        new = await _extract(self._pipeline(db), store=True, incremental=True)
+        # 2024's supply chain and one risk diff (2024 vs 2023).
+        assert fake_anthropic["calls"] - calls == _SECTIONS + 1
+        assert {s.metadata["_filing_accession"] for s in new} == {
+            "0000320193-24-000001"
+        }
+        # 2022 is neither pending nor needed as a predecessor.
+        assert fetched == {"2023": 1, "2024": 1}
+
+    @respx.mock
+    async def test_failed_jobs_are_retried(self, tmp_path: Path) -> None:
+        db = tmp_path / "inc.duckdb"
+        _mock_edgar([2023, 2024])
+        calls: list[str] = []
+
+        async def failing(self_: object, system: str, user: str, **_: object) -> object:
+            calls.append(system)
+            if "securities lawyer" in system:
+                raise RuntimeError("LLM down")
+            return _llm_reply(system)
+
+        with patch("alphasig.llm.LLMClient.extract_json", new=failing):
+            await _extract(self._pipeline(db), store=True, incremental=True)
+        with SignalStore(db) as store:
+            done = set(store.completed_extractions())
+        assert ("0000320193-24-000001", "risk_differ") not in done
+        assert ("0000320193-24-000001", "supply_chain") in done
+
+        async def working(self_: object, system: str, user: str, **_: object) -> object:
+            calls.append(system)
+            return _llm_reply(system)
+
+        calls.clear()
+        with patch("alphasig.llm.LLMClient.extract_json", new=working):
+            retried = await _extract(self._pipeline(db), store=True, incremental=True)
+        assert len(calls) == 1 and "securities lawyer" in calls[0]
+        assert [s.signal_type for s in retried] == [SignalType.RISK_CHANGE]
+
+    @respx.mock
+    async def test_calibrated_run_redoes_and_replaces_raw_jobs(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        db = tmp_path / "inc.duckdb"
+        _mock_edgar([2023, 2024])
+        raw = await _extract(self._pipeline(db), store=True, incremental=True)
+        assert all(s.confidence != 0.5 for s in raw)
+
+        calibrator = _HalfCalibrator()
+        calibrated = await _extract(
+            self._pipeline(db, calibrator=calibrator), store=True, incremental=True
+        )
+        assert calibrator.calls == 2
+        assert len(calibrated) == len(raw)
+        with SignalStore(db) as store:
+            stored = store.query()
+            done = store.completed_extractions()
+        # The raw signals were replaced, not duplicated.
+        assert len(stored) == len(raw)
+        assert {s.confidence for s in stored} == {0.5}
+        assert all(record.calibrated for record in done.values())
+
+        # A later uncalibrated run accepts the calibrated jobs as done.
+        calls = fake_anthropic["calls"]
+        assert await _extract(self._pipeline(db), store=True, incremental=True) == []
+        assert fake_anthropic["calls"] == calls
+
+    @respx.mock
+    async def test_jobs_jev_failed_to_score_are_retried(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        from tests.test_jev import _FakeJev
+
+        db = tmp_path / "inc.duckdb"
+        _mock_edgar([2023, 2024])
+        down = _FakeJev(status=500)
+        first = await _extract(
+            self._pipeline(db, calibrator=JevCalibrator(down.client())),
+            store=True,
+            incremental=True,
+        )
+        assert first and down.requests
+        assert all("confidence_source" not in s.metadata for s in first)
+        with SignalStore(db) as store:
+            done = store.completed_extractions()
+        # Jobs with signals were not calibrated; the empty 2023 diff was.
+        assert not done[("0000320193-24-000001", "risk_differ")].calibrated
+        assert done[("0000320193-23-000001", "risk_differ")].calibrated
+
+        calls = fake_anthropic["calls"]
+        up = _FakeJev(probability=0.7)
+        retried = await _extract(
+            self._pipeline(db, calibrator=JevCalibrator(up.client())),
+            store=True,
+            incremental=True,
+        )
+        assert fake_anthropic["calls"] > calls
+        assert retried and {s.confidence for s in retried} == {0.7}
+        with SignalStore(db) as store:
+            assert {s.confidence for s in store.query()} == {0.7}
+            assert store.count() == len(first)
+
+    @respx.mock
+    async def test_diff_job_is_redone_when_its_predecessor_changes(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        db = tmp_path / "inc.duckdb"
+        # First run sees only the 2024 filing: nothing to diff against.
+        _mock_edgar([2024])
+        await _extract(self._pipeline(db), store=True, incremental=True)
+        calls = fake_anthropic["calls"]
+
+        # The 2023 filing appears (e.g. a longer lookback).
+        respx.reset()
+        _mock_edgar([2023, 2024])
+        new = await _extract(self._pipeline(db), store=True, incremental=True)
+        # 2023's supply chain (its risk diff has no predecessor) + 2024's diff.
+        assert fake_anthropic["calls"] - calls == _SECTIONS + 1
+        assert SignalType.RISK_CHANGE in {s.signal_type for s in new}
+        with SignalStore(db) as store:
+            record = store.completed_extractions()[
+                ("0000320193-24-000001", "risk_differ")
+            ]
+        assert record.previous_accession == "0000320193-23-000001"
+
+    @respx.mock
+    async def test_non_incremental_runs_ignore_the_log(
+        self, fake_anthropic: dict[str, int], tmp_path: Path
+    ) -> None:
+        db = tmp_path / "inc.duckdb"
+        _mock_edgar([2023, 2024])
+        await _extract(self._pipeline(db), store=True, incremental=True)
+        calls = fake_anthropic["calls"]
+        again = await _extract(self._pipeline(db), store=True)
+        assert again
+        assert fake_anthropic["calls"] == 2 * calls
+        with SignalStore(db) as store:
+            # Idempotent insert: the repeat run added no duplicate rows.
+            assert store.count() == len(again)
+
+    async def test_requires_database(self) -> None:
+        from alphasig.exceptions import ConfigurationError
+
+        pipeline = Pipeline(api_key="k", user_agent=_UA, db_path=None)
+        with pytest.raises(ConfigurationError, match="db_path"):
+            await pipeline.extract(tickers=["AAPL"], incremental=True)
+        pipeline = Pipeline(api_key="k", user_agent=_UA, db_path=":memory:")
+        with pytest.raises(ConfigurationError, match="store=True"):
+            await pipeline.extract(tickers=["AAPL"], incremental=True, store=False)
