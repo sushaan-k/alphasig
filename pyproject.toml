@@ -128,6 +128,7 @@ module = [
     "fastapi.*",
     "uvicorn",
     "uvicorn.*",
+    "lxml",
 ]
 ignore_missing_imports = true
 
