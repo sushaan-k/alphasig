@@ -30,13 +30,13 @@ from tenacity import (
     wait_exponential,
 )
 
-from sigint.exceptions import (
+from alphasig.exceptions import (
     EdgarError,
     EdgarNotFoundError,
     EdgarRateLimitError,
     EdgarTransientError,
 )
-from sigint.models import Filing, FilingType
+from alphasig.models import Filing, FilingType
 
 logger = structlog.get_logger()
 

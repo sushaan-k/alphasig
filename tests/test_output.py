@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 import respx
 
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.output.parquet import (
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.output.parquet import (
     read_signals_parquet,
     write_signals_csv,
     write_signals_parquet,
 )
-from sigint.output.webhook import WebhookSender
+from alphasig.output.webhook import WebhookSender
 
 
 class TestParquetOutput:
@@ -273,7 +273,7 @@ class TestAPIServer:
     def test_build_app_health(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -285,7 +285,7 @@ class TestAPIServer:
     def test_build_app_get_signals(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -298,7 +298,7 @@ class TestAPIServer:
     def test_build_app_filter_by_ticker(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -311,7 +311,7 @@ class TestAPIServer:
     def test_build_app_filter_by_type(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -324,7 +324,7 @@ class TestAPIServer:
     def test_build_app_filter_by_direction(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -337,7 +337,7 @@ class TestAPIServer:
     def test_build_app_filter_min_strength(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -350,7 +350,7 @@ class TestAPIServer:
     def test_build_app_limit(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -363,7 +363,7 @@ class TestAPIServer:
     def test_build_app_summary(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -379,7 +379,7 @@ class TestAPIServer:
     def test_build_app_signals_for_ticker(self, sample_signals: list[Signal]) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -394,7 +394,7 @@ class TestAPIServer:
     ) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)
@@ -409,7 +409,7 @@ class TestAPIServer:
     def test_build_app_empty_signals(self) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app([])
         client = TestClient(app)
@@ -423,7 +423,7 @@ class TestAPIServer:
     ) -> None:
         from starlette.testclient import TestClient
 
-        from sigint.output.api import _build_app
+        from alphasig.output.api import _build_app
 
         app = _build_app(sample_signals)
         client = TestClient(app)

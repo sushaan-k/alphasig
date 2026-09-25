@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sigint import Pipeline, SignalCollection
+from alphasig import Pipeline, SignalCollection
 
 MAG7 = ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA"]
 
@@ -21,7 +21,7 @@ MAG7 = ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA"]
 async def main() -> None:
     pipeline = Pipeline(
         model="claude-sonnet-4-6",
-        user_agent="sigint-example research@example.com",
+        user_agent="alphasig-example research@example.com",
         cache_dir="./edgar_cache",
         db_path="mag7.duckdb",
     )

@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import respx
 
-from sigint.exceptions import ExtractionError, PipelineError
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.pipeline import (
+from alphasig.exceptions import ExtractionError, PipelineError
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.pipeline import (
     Pipeline,
     _deduplicate_amendment_signals,
     _resolve_engines,
@@ -135,7 +135,7 @@ class TestPipelineIntegration:
             },
         ]
 
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -184,7 +184,7 @@ class TestPipelineIntegration:
         )
 
         mock_response = AsyncMock(return_value=[])
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -219,7 +219,7 @@ class TestPipelineIntegration:
         )
 
         mock_response = AsyncMock(return_value=[])
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -269,7 +269,7 @@ class TestPipelineIntegration:
         )
 
         mock_response = AsyncMock(return_value=[])
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -351,7 +351,7 @@ class TestPipelineIntegration:
             ]
 
         with patch(
-            "sigint.llm.LLMClient.extract_json",
+            "alphasig.llm.LLMClient.extract_json",
             new=alternating_response,
         ):
             pipeline = Pipeline(
@@ -402,7 +402,7 @@ class TestPipelineIntegration:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Pipeline.extract() raises ConfigurationError when no API key."""
-        from sigint.exceptions import ConfigurationError
+        from alphasig.exceptions import ConfigurationError
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         pipeline = Pipeline(
@@ -630,7 +630,7 @@ class TestConcurrentFilingDownloads:
             ]
         )
 
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -684,7 +684,7 @@ class TestConcurrentFilingDownloads:
         )
 
         mock_response = AsyncMock(return_value=[])
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",
@@ -734,7 +734,7 @@ class TestConcurrentFilingDownloads:
         )
 
         mock_response = AsyncMock(return_value=[])
-        with patch("sigint.llm.LLMClient.extract_json", new=mock_response):
+        with patch("alphasig.llm.LLMClient.extract_json", new=mock_response):
             pipeline = Pipeline(
                 model="claude-sonnet-4-6",
                 api_key="test-key",

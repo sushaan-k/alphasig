@@ -1,4 +1,4 @@
-"""Shared test fixtures for sigint."""
+"""Shared test fixtures for alphasig."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from sigint.models import (
+from alphasig.models import (
     Filing,
     FilingSection,
     FilingType,

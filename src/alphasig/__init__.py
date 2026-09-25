@@ -1,4 +1,4 @@
-"""sigint -- Causal signal extraction from SEC filings.
+"""alphasig -- Causal signal extraction from SEC filings.
 
 LLM-powered pipeline that ingests SEC filings via EDGAR, performs deep
 causal and structural extraction, and outputs structured, backtestable
@@ -6,7 +6,7 @@ signals.
 
 Quick start::
 
-    from sigint import Pipeline, SignalCollection
+    from alphasig import Pipeline, SignalCollection
 
     pipeline = Pipeline(model="claude-sonnet-4-6")
     signals = await pipeline.extract(
@@ -20,9 +20,12 @@ Quick start::
     bearish.to_parquet("bearish_signals.parquet")
 """
 
-from sigint.edgar import EdgarClient
-from sigint.graph import SupplyChainGraph
-from sigint.models import (
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
+from alphasig.edgar import EdgarClient
+from alphasig.graph import SupplyChainGraph
+from alphasig.models import (
     Filing,
     FilingSection,
     FilingType,
@@ -38,8 +41,8 @@ from sigint.models import (
     TonePoint,
     ToneTrajectory,
 )
-from sigint.pipeline import Pipeline
-from sigint.reporting import (
+from alphasig.pipeline import Pipeline
+from alphasig.reporting import (
     SectorExposureReport,
     SectorScore,
     SignalRankingReport,
@@ -47,11 +50,14 @@ from sigint.reporting import (
     rank_signals,
     summarize_sector_exposure,
 )
-from sigint.sectors import Sector, classify_sector
-from sigint.signals import CorrelationMatrix, SignalCollection
-from sigint.storage import SignalStore
+from alphasig.sectors import Sector, classify_sector
+from alphasig.signals import CorrelationMatrix, SignalCollection
+from alphasig.storage import SignalStore
 
-__version__ = "0.1.0"
+try:
+    __version__ = _version("alphasig")
+except PackageNotFoundError:  # pragma: no cover - running from a source tree
+    __version__ = "0+unknown"
 
 __all__ = [
     "CorrelationMatrix",

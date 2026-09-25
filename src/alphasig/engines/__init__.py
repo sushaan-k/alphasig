@@ -1,4 +1,4 @@
-"""Extraction engines for sigint.
+"""Extraction engines for alphasig.
 
 Each engine implements a common async interface::
 
@@ -11,10 +11,10 @@ Engines:
     tone         -- Track topic-level management tone trajectories.
 """
 
-from sigint.engines.m_and_a import MandAEngine
-from sigint.engines.risk_differ import RiskDifferEngine
-from sigint.engines.supply_chain import SupplyChainEngine
-from sigint.engines.tone import ToneEngine
+from alphasig.engines.m_and_a import MandAEngine
+from alphasig.engines.risk_differ import RiskDifferEngine
+from alphasig.engines.supply_chain import SupplyChainEngine
+from alphasig.engines.tone import ToneEngine
 
 __all__ = [
     "MandAEngine",

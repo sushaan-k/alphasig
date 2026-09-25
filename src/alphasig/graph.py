@@ -12,7 +12,7 @@ from typing import Any
 import networkx as nx
 import structlog
 
-from sigint.models import SupplyChainEdge
+from alphasig.models import SupplyChainEdge
 
 logger = structlog.get_logger()
 

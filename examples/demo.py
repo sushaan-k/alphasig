@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Offline demo for sigint."""
+"""Offline demo for alphasig."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sigint import Signal, SignalCollection, SignalDirection, SignalType
+from alphasig import Signal, SignalCollection, SignalDirection, SignalType
 
 
 def build_signal(
@@ -58,7 +58,7 @@ def main() -> None:
     graph = signals.supply_chain_graph()
     bearish = signals.by_direction("bearish").above_strength(0.7)
 
-    print("sigint demo")
+    print("alphasig demo")
     print(f"total signals: {len(signals)}")
     print(f"bearish signals: {len(bearish)}")
     print(f"supply-chain nodes: {len(graph.nodes)}")

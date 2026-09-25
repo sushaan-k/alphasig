@@ -1,4 +1,4 @@
-"""Main orchestration pipeline for sigint.
+"""Main orchestration pipeline for alphasig.
 
 The :class:`Pipeline` class ties together EDGAR ingestion, section
 parsing, extraction engines, and signal compilation into a single
@@ -15,18 +15,18 @@ from collections.abc import Sequence
 
 import structlog
 
-from sigint.edgar import EdgarClient
-from sigint.engines.base import BaseEngine
-from sigint.engines.m_and_a import MandAEngine
-from sigint.engines.risk_differ import RiskDifferEngine
-from sigint.engines.supply_chain import SupplyChainEngine
-from sigint.engines.tone import ToneEngine
-from sigint.exceptions import ConfigurationError, ExtractionError, PipelineError
-from sigint.llm import LLMClient
-from sigint.models import Filing, FilingSection, Signal
-from sigint.parser import parse_filing
-from sigint.signals import SignalCollection
-from sigint.storage import SignalStore
+from alphasig.edgar import EdgarClient
+from alphasig.engines.base import BaseEngine
+from alphasig.engines.m_and_a import MandAEngine
+from alphasig.engines.risk_differ import RiskDifferEngine
+from alphasig.engines.supply_chain import SupplyChainEngine
+from alphasig.engines.tone import ToneEngine
+from alphasig.exceptions import ConfigurationError, ExtractionError, PipelineError
+from alphasig.llm import LLMClient
+from alphasig.models import Filing, FilingSection, Signal
+from alphasig.parser import parse_filing
+from alphasig.signals import SignalCollection
+from alphasig.storage import SignalStore
 
 logger = structlog.get_logger()
 
@@ -42,7 +42,7 @@ _DIFF_ENGINES = {"risk_differ", "tone"}
 
 
 class Pipeline:
-    """Orchestrates the full sigint extraction pipeline.
+    """Orchestrates the full alphasig extraction pipeline.
 
     Args:
         model: LLM model identifier.
@@ -61,9 +61,9 @@ class Pipeline:
         *,
         model: str = "claude-sonnet-4-6",
         api_key: str | None = None,
-        user_agent: str = "sigint research bot research@example.com",
+        user_agent: str = "alphasig research bot research@example.com",
         cache_dir: str = "./edgar_cache",
-        db_path: str | None = "sigint.duckdb",
+        db_path: str | None = "alphasig.duckdb",
         concurrency: int = 4,
         max_concurrent: int = 3,
     ) -> None:

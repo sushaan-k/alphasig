@@ -1,4 +1,4 @@
-"""Centralised structured-logging configuration for sigint.
+"""Centralised structured-logging configuration for alphasig.
 
 Call ``configure_logging`` once at application startup (the CLI does this
 automatically).  All modules import their loggers via::

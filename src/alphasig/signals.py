@@ -16,14 +16,14 @@ from typing import Any
 
 import structlog
 
-from sigint.models import (
+from alphasig.models import (
     Severity,
     Signal,
     SignalDirection,
     SignalType,
     SupplyChainEdge,
 )
-from sigint.sectors import Sector, classify_sector
+from alphasig.sectors import Sector, classify_sector
 
 logger = structlog.get_logger()
 
@@ -249,7 +249,7 @@ class SignalCollection:
 
     def supply_chain_edges(self) -> list[SupplyChainEdge]:
         """Extract supply-chain edges from supply_chain signals."""
-        from sigint.models import FilingType, RelationType
+        from alphasig.models import FilingType, RelationType
 
         edges: list[SupplyChainEdge] = []
         for s in self.by_type(SignalType.SUPPLY_CHAIN):
@@ -275,9 +275,9 @@ class SignalCollection:
         """Build a :class:`SupplyChainGraph` from supply_chain signals.
 
         Returns:
-            A :class:`sigint.graph.SupplyChainGraph` instance.
+            A :class:`alphasig.graph.SupplyChainGraph` instance.
         """
-        from sigint.graph import SupplyChainGraph
+        from alphasig.graph import SupplyChainGraph
 
         return SupplyChainGraph(self.supply_chain_edges())
 
@@ -372,7 +372,7 @@ class SignalCollection:
         Returns:
             The resolved output path.
         """
-        from sigint.output.parquet import write_signals_parquet
+        from alphasig.output.parquet import write_signals_parquet
 
         return write_signals_parquet(self._signals, path)
 
@@ -385,7 +385,7 @@ class SignalCollection:
         Returns:
             The resolved output path.
         """
-        from sigint.output.parquet import write_signals_csv
+        from alphasig.output.parquet import write_signals_csv
 
         return write_signals_csv(self._signals, path)
 
@@ -396,6 +396,6 @@ class SignalCollection:
             host: Bind address.
             port: Bind port.
         """
-        from sigint.output.api import serve_signals
+        from alphasig.output.api import serve_signals
 
         serve_signals(self._signals, host=host, port=port)

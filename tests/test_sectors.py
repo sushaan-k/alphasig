@@ -1,12 +1,12 @@
-"""Tests for sigint.sectors -- sector classification."""
+"""Tests for alphasig.sectors -- sector classification."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.sectors import Sector, classify_sector
-from sigint.signals import SignalCollection
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.sectors import Sector, classify_sector
+from alphasig.signals import SignalCollection
 
 
 class TestClassifySector:
@@ -49,7 +49,7 @@ class TestClassifySector:
         assert classify_sector("KO") == Sector.CONSUMER_STAPLES
 
     def test_lookup_table_has_at_least_100_entries(self) -> None:
-        from sigint.sectors import _TICKER_SECTOR_MAP
+        from alphasig.sectors import _TICKER_SECTOR_MAP
 
         assert len(_TICKER_SECTOR_MAP) >= 100
 

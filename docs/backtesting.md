@@ -1,13 +1,13 @@
 # Backtesting Guide
 
-sigint outputs structured, timestamped signals designed for integration with quantitative backtesting frameworks.
+alphasig outputs structured, timestamped signals designed for integration with quantitative backtesting frameworks.
 
 ## Parquet Export
 
 The primary export format for backtesting is Parquet, which is natively supported by Lean, Zipline, and most pandas-based backtest systems.
 
 ```python
-from sigint import Pipeline
+from alphasig import Pipeline
 
 pipeline = Pipeline(model="claude-sonnet-4-6")
 signals = await pipeline.extract(
@@ -70,9 +70,9 @@ For portfolio review or pre-backtest screening, score the local signal store
 without re-running EDGAR or LLM extraction:
 
 ```bash
-sigint rank --db sigint.duckdb --min-confidence 0.8 --limit 25
-sigint rank --db sigint.duckdb --format json --output ranking.json
-sigint rank --db sigint.duckdb --as-of 2025-01-15T00:00:00Z
+alphasig rank --db alphasig.duckdb --min-confidence 0.8 --limit 25
+alphasig rank --db alphasig.duckdb --format json --output ranking.json
+alphasig rank --db alphasig.duckdb --as-of 2025-01-15T00:00:00Z
 ```
 
 The ranking uses confidence-weighted directional strength:
@@ -85,9 +85,9 @@ The ranking uses confidence-weighted directional strength:
 The same logic is available from Python:
 
 ```python
-from sigint import SignalStore, rank_signals
+from alphasig import SignalStore, rank_signals
 
-store = SignalStore("sigint.duckdb")
+store = SignalStore("alphasig.duckdb")
 signals = store.query(min_confidence=0.8, limit=100_000)
 store.close()
 
@@ -98,15 +98,15 @@ print(report.to_json())
 For portfolio construction, summarize the same directional exposure by sector:
 
 ```bash
-sigint sectors --db sigint.duckdb --min-confidence 0.8 --limit 5
-sigint sectors --db sigint.duckdb --exclude-unknown --format markdown \
+alphasig sectors --db alphasig.duckdb --min-confidence 0.8 --limit 5
+alphasig sectors --db alphasig.duckdb --exclude-unknown --format markdown \
   --output sector_exposure.md
 ```
 
 ```python
-from sigint import SignalStore, summarize_sector_exposure
+from alphasig import SignalStore, summarize_sector_exposure
 
-store = SignalStore("sigint.duckdb")
+store = SignalStore("alphasig.duckdb")
 signals = store.query(min_confidence=0.8, limit=100_000)
 store.close()
 
@@ -124,9 +124,9 @@ capital to a strategy slice.
 For more complex queries, use the DuckDB store directly:
 
 ```python
-from sigint import SignalStore
+from alphasig import SignalStore
 
-store = SignalStore("sigint.duckdb")
+store = SignalStore("alphasig.duckdb")
 
 # Get summary statistics
 summary = store.summary()

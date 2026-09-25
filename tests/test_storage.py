@@ -1,4 +1,4 @@
-"""Tests for sigint.storage -- DuckDB signal store."""
+"""Tests for alphasig.storage -- DuckDB signal store."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.storage import SignalStore
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.storage import SignalStore
 
 
 class TestSignalStore:

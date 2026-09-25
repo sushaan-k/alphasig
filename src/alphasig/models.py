@@ -1,4 +1,4 @@
-"""Pydantic data models used throughout the sigint pipeline.
+"""Pydantic data models used throughout the alphasig pipeline.
 
 Every model is immutable (``frozen=True``) so instances are hashable and
 safe to share across async tasks.
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class FilingType(enum.StrEnum):
-    """SEC filing types supported by sigint."""
+    """SEC filing types supported by alphasig."""
 
     TEN_K = "10-K"
     TEN_Q = "10-Q"

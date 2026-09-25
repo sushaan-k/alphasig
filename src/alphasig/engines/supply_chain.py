@@ -13,9 +13,9 @@ from datetime import UTC, datetime
 
 import structlog
 
-from sigint.engines.base import BaseEngine
-from sigint.llm import LLMClient
-from sigint.models import (
+from alphasig.engines.base import BaseEngine
+from alphasig.llm import LLMClient
+from alphasig.models import (
     FilingSection,
     RelationType,
     Signal,

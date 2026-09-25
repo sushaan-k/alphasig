@@ -14,8 +14,8 @@ import structlog
 from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString
 
-from sigint.exceptions import ParsingError
-from sigint.models import Filing, FilingSection
+from alphasig.exceptions import ParsingError
+from alphasig.models import Filing, FilingSection
 
 logger = structlog.get_logger()
 

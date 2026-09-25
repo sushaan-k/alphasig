@@ -1,4 +1,4 @@
-"""Output format adapters for sigint signals.
+"""Output format adapters for alphasig signals.
 
 Modules:
     parquet -- Parquet and CSV file export.

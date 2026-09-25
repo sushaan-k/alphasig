@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sigint import Pipeline
+from alphasig import Pipeline
 
 TICKERS = ["AAPL", "NVDA", "AMD", "QCOM", "AVGO", "INTC"]
 
@@ -21,7 +21,7 @@ TICKERS = ["AAPL", "NVDA", "AMD", "QCOM", "AVGO", "INTC"]
 async def main() -> None:
     pipeline = Pipeline(
         model="claude-sonnet-4-6",
-        user_agent="sigint-example research@example.com",
+        user_agent="alphasig-example research@example.com",
         cache_dir="./edgar_cache",
         db_path=None,  # Don't persist for this example
     )

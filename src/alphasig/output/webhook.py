@@ -1,4 +1,4 @@
-"""Webhook notification sender for sigint signals.
+"""Webhook notification sender for alphasig signals.
 
 Sends JSON payloads to configured webhook URLs when new signals are
 extracted.  Supports basic retry and configurable filtering.
@@ -13,7 +13,7 @@ import httpx
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from sigint.models import Signal, SignalDirection, SignalType
+from alphasig.models import Signal, SignalDirection, SignalType
 
 logger = structlog.get_logger()
 
@@ -89,7 +89,7 @@ class WebhookSender:
             if not self._should_send(signal):
                 continue
             payload = {
-                "source": "sigint",
+                "source": "alphasig",
                 "signal": signal.model_dump(mode="json"),
             }
             try:
@@ -125,7 +125,7 @@ class WebhookSender:
             return 0
 
         payload = {
-            "source": "sigint",
+            "source": "alphasig",
             "batch": True,
             "count": len(qualifying),
             "signals": [s.model_dump(mode="json") for s in qualifying],

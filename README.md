@@ -83,7 +83,7 @@ pip install alphasig
 
 ```python
 import asyncio
-from sigint import Pipeline
+from alphasig import Pipeline
 
 async def main():
     pipeline = Pipeline(
@@ -120,9 +120,9 @@ For offline portfolio review, `rank_signals` converts any stored or exported
 signals into a deterministic watchlist:
 
 ```python
-from sigint import SignalStore, rank_signals, summarize_sector_exposure
+from alphasig import SignalStore, rank_signals, summarize_sector_exposure
 
-store = SignalStore("sigint.duckdb")
+store = SignalStore("alphasig.duckdb")
 signals = store.query(min_confidence=0.8, limit=100_000)
 store.close()
 
@@ -143,11 +143,11 @@ alphasig extract --tickers AAPL MSFT --lookback 3 --output signals.parquet
 alphasig query --ticker AAPL --type risk_change --min-strength 0.7
 
 # Rank stored signals into a portfolio watchlist
-alphasig rank --db sigint.duckdb --min-confidence 0.8 --format markdown \
+alphasig rank --db alphasig.duckdb --min-confidence 0.8 --format markdown \
   --output reports/ranking.md
 
 # Summarize directional exposure by sector
-alphasig sectors --db sigint.duckdb --exclude-unknown --format json \
+alphasig sectors --db alphasig.duckdb --exclude-unknown --format json \
   --output reports/sector_exposure.json
 
 # Launch REST API
@@ -201,7 +201,7 @@ Signal(
 
 ```
 alphasig/
-├── src/sigint/
+├── src/alphasig/
 │   ├── __init__.py          # Public API
 │   ├── edgar.py             # Async EDGAR client with rate limiting
 │   ├── parser.py            # HTML filing section parser
@@ -248,7 +248,7 @@ cd alphasig
 pip install -e ".[dev]"
 pytest -v
 ruff check src/ tests/
-mypy src/sigint/
+mypy src/alphasig/
 ```
 
 ## Research References

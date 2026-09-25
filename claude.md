@@ -1,4 +1,4 @@
-# sigint
+# alphasig
 
 ## LLM-Powered Causal Signal Extraction from SEC Filings
 
@@ -18,13 +18,13 @@ arXiv research from March 2026 (FinToolBench) showed that LLM agents still strug
 
 ### The Solution
 
-`sigint` is a pipeline that ingests SEC filings (via EDGAR), performs deep causal and structural extraction using LLMs, and outputs structured, backtestable signals.
+`alphasig` is a pipeline that ingests SEC filings (via EDGAR), performs deep causal and structural extraction using LLMs, and outputs structured, backtestable signals.
 
 ### Pipeline Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                        sigint                             │
+│                        alphasig                             │
 │                                                           │
 │  ┌──────────────┐                                         │
 │  │  EDGAR       │  Pulls 10-K, 10-Q, 8-K, DEF 14A        │
@@ -90,7 +90,7 @@ arXiv research from March 2026 (FinToolBench) showed that LLM agents still strug
 
 #### 1. Supply Chain Graph Builder
 
-Most companies mention key suppliers and customers in their 10-K (often required by SEC rules). `sigint` extracts these into a **knowledge graph**:
+Most companies mention key suppliers and customers in their 10-K (often required by SEC rules). `alphasig` extracts these into a **knowledge graph**:
 
 ```python
 # Output: supply chain edges
@@ -108,7 +108,7 @@ Why this matters: When TSMC reports earnings or faces a supply disruption, you k
 
 #### 2. Risk Factor Differ
 
-10-K/10-Q filings have a "Risk Factors" section. Companies are legally required to disclose material risks. `sigint` diffs these between consecutive filings:
+10-K/10-Q filings have a "Risk Factors" section. Companies are legally required to disclose material risks. `alphasig` diffs these between consecutive filings:
 
 ```python
 # Output: risk factor changes
@@ -201,7 +201,7 @@ Output formats:
 ### API Surface (Draft)
 
 ```python
-from sigint import Pipeline, EDGAR, Signals
+from alphasig import Pipeline, EDGAR, Signals
 
 # Initialize
 edgar = EDGAR(api_key="...", cache_dir="./edgar_cache")
@@ -239,11 +239,11 @@ signals.to_api(port=8080)
 ### Repo Structure
 
 ```
-sigint/
+alphasig/
 ├── README.md
 ├── pyproject.toml
 ├── src/
-│   └── sigint/
+│   └── alphasig/
 │       ├── __init__.py
 │       ├── edgar.py            # EDGAR API client
 │       ├── parser.py           # Filing section parser

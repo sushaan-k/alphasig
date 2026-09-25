@@ -1,4 +1,4 @@
-"""Tests for sigint.edgar -- EDGAR API client."""
+"""Tests for alphasig.edgar -- EDGAR API client."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import httpx
 import pytest
 import respx
 
-from sigint.edgar import EdgarClient
-from sigint.exceptions import EdgarNotFoundError
-from sigint.models import FilingType
+from alphasig.edgar import EdgarClient
+from alphasig.exceptions import EdgarNotFoundError
+from alphasig.models import FilingType
 
 # -- Fixtures ----------------------------------------------------------------
 

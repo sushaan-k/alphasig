@@ -19,7 +19,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from sigint.exceptions import LLMContextLengthError, LLMError, LLMRateLimitError
+from alphasig.exceptions import LLMContextLengthError, LLMError, LLMRateLimitError
 
 logger = structlog.get_logger()
 

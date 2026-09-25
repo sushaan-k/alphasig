@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
-from sigint.models import Signal
+from alphasig.models import Signal
 
 logger = structlog.get_logger()
 
@@ -123,7 +123,7 @@ def read_signals_parquet(path: str | Path) -> list[Signal]:
     Returns:
         List of :class:`Signal` instances.
     """
-    from sigint.models import SignalDirection, SignalType
+    from alphasig.models import SignalDirection, SignalType
 
     table = pq.read_table(str(path))
     signals: list[Signal] = []

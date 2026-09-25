@@ -1,6 +1,6 @@
 # Extraction Engines
 
-sigint ships with four extraction engines, each targeting a different class of causal signal buried in SEC filings.
+alphasig ships with four extraction engines, each targeting a different class of causal signal buried in SEC filings.
 
 ## Supply Chain Graph Builder
 

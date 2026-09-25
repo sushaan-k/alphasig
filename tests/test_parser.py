@@ -1,12 +1,12 @@
-"""Tests for sigint.parser -- Filing section parser."""
+"""Tests for alphasig.parser -- Filing section parser."""
 
 from __future__ import annotations
 
 import pytest
 
-from sigint.exceptions import ParsingError
-from sigint.models import Filing, FilingSection, FilingType
-from sigint.parser import find_section, parse_filing
+from alphasig.exceptions import ParsingError
+from alphasig.models import Filing, FilingSection, FilingType
+from alphasig.parser import find_section, parse_filing
 
 
 class TestParseFiling:

@@ -1,4 +1,4 @@
-"""Tests for sigint._logging -- Centralised logging configuration."""
+"""Tests for alphasig._logging -- Centralised logging configuration."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 
 import structlog
 
-from sigint._logging import configure_logging
+from alphasig._logging import configure_logging
 
 
 class TestConfigureLogging:

@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sigint.engines.m_and_a import MandAEngine
-from sigint.engines.risk_differ import RiskDifferEngine, compute_text_similarity
-from sigint.engines.supply_chain import SupplyChainEngine
-from sigint.engines.tone import ToneEngine, classify_tone_shift
-from sigint.llm import LLMClient
-from sigint.models import (
+from alphasig.engines.m_and_a import MandAEngine
+from alphasig.engines.risk_differ import RiskDifferEngine, compute_text_similarity
+from alphasig.engines.supply_chain import SupplyChainEngine
+from alphasig.engines.tone import ToneEngine, classify_tone_shift
+from alphasig.llm import LLMClient
+from alphasig.models import (
     FilingSection,
     SignalDirection,
     SignalType,
@@ -120,7 +120,7 @@ class TestSupplyChainEngine:
         """Sections not in {business, risk_factors, md_and_a} are skipped."""
         from datetime import date
 
-        from sigint.models import FilingType
+        from alphasig.models import FilingType
 
         sections = [
             FilingSection(
@@ -262,7 +262,7 @@ class TestRiskDifferEngine:
         """When current filing lacks risk_factors section, return empty."""
         from datetime import date
 
-        from sigint.models import FilingType
+        from alphasig.models import FilingType
 
         sections_without_rf = [
             FilingSection(
@@ -288,7 +288,7 @@ class TestRiskDifferEngine:
         """When previous filing lacks risk_factors, return empty."""
         from datetime import date
 
-        from sigint.models import FilingType
+        from alphasig.models import FilingType
 
         prev_without_rf = [
             FilingSection(
@@ -315,7 +315,7 @@ class TestRiskDifferEngine:
         """When similarity > 0.98, skip the LLM call entirely."""
         from datetime import date
 
-        from sigint.models import FilingType
+        from alphasig.models import FilingType
 
         text = "We face supply chain risks. " * 100
         current = [
@@ -662,7 +662,7 @@ class TestToneEngine:
     async def test_no_mda_section_returns_empty(self, mock_llm: LLMClient) -> None:
         from datetime import date
 
-        from sigint.models import FilingType
+        from alphasig.models import FilingType
 
         sections = [
             FilingSection(

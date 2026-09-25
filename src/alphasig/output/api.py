@@ -6,7 +6,7 @@ Launch with::
 
 Or standalone::
 
-    sigint serve --port 8080
+    alphasig serve --port 8080
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 
 import structlog
 
-from sigint.models import Signal
+from alphasig.models import Signal
 
 logger = structlog.get_logger()
 
@@ -32,11 +32,11 @@ def _build_app(signals: Sequence[Signal]) -> Any:
     except ImportError as exc:
         raise ImportError(
             "FastAPI is required for the REST API. "
-            "Install it with: pip install sigint[api]"
+            "Install it with: pip install alphasig[api]"
         ) from exc
 
     app = FastAPI(
-        title="sigint",
+        title="alphasig",
         description="Causal signal extraction from SEC filings",
         version="0.1.0",
     )
@@ -120,7 +120,7 @@ def serve_signals(
     except ImportError as exc:
         raise ImportError(
             "uvicorn is required for the REST API. "
-            "Install it with: pip install sigint[api]"
+            "Install it with: pip install alphasig[api]"
         ) from exc
 
     app = _build_app(signals)

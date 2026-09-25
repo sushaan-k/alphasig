@@ -1,4 +1,4 @@
-"""Tests for sigint.signals -- SignalCollection."""
+"""Tests for alphasig.signals -- SignalCollection."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sigint.models import FilingType, Signal, SignalDirection, SignalType
-from sigint.signals import CorrelationMatrix, SignalCollection, _pearson
+from alphasig.models import FilingType, Signal, SignalDirection, SignalType
+from alphasig.signals import CorrelationMatrix, SignalCollection, _pearson
 
 
 class TestSignalCollection:

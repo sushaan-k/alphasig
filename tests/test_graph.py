@@ -1,9 +1,9 @@
-"""Tests for sigint.graph -- Supply-chain knowledge graph."""
+"""Tests for alphasig.graph -- Supply-chain knowledge graph."""
 
 from __future__ import annotations
 
-from sigint.graph import SupplyChainGraph
-from sigint.models import RelationType, SupplyChainEdge
+from alphasig.graph import SupplyChainGraph
+from alphasig.models import RelationType, SupplyChainEdge
 
 
 class TestSupplyChainGraph:

@@ -1,11 +1,11 @@
-"""Tests for sigint.reporting -- offline signal ranking reports."""
+"""Tests for alphasig.reporting -- offline signal ranking reports."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.reporting import rank_signals, summarize_sector_exposure
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.reporting import rank_signals, summarize_sector_exposure
 
 
 def _signal(

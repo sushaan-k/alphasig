@@ -1,6 +1,6 @@
 # Signal Schema
 
-All sigint extraction engines emit signals conforming to a universal schema. This ensures downstream consumers (backtest engines, dashboards, alert systems) only need to handle a single data structure.
+All alphasig extraction engines emit signals conforming to a universal schema. This ensures downstream consumers (backtest engines, dashboards, alert systems) only need to handle a single data structure.
 
 ## Signal Fields
 
@@ -42,7 +42,7 @@ Signals can be exported to:
 ## Ranking Reports
 
 Stored signals can also be transformed into ticker-level ranking reports with
-`sigint rank` or `rank_signals(signals)`. Each ticker score includes:
+`alphasig rank` or `rank_signals(signals)`. Each ticker score includes:
 
 | Field | Description |
 |---|---|
@@ -59,7 +59,7 @@ portfolio review notes.
 
 ## Sector Exposure Reports
 
-Use `sigint sectors` or `summarize_sector_exposure(signals)` to group the same
+Use `alphasig sectors` or `summarize_sector_exposure(signals)` to group the same
 confidence-weighted directional signals by sector. Each sector score includes:
 
 | Field | Description |

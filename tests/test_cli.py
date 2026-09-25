@@ -1,4 +1,4 @@
-"""Tests for sigint.cli -- Command-line interface using Click's CliRunner."""
+"""Tests for alphasig.cli -- Command-line interface using Click's CliRunner."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from sigint.cli import _parse_cli_datetime, _print_signal_table, main
-from sigint.models import Signal, SignalDirection, SignalType
-from sigint.signals import SignalCollection
+from alphasig.cli import _parse_cli_datetime, _print_signal_table, main
+from alphasig.models import Signal, SignalDirection, SignalType
+from alphasig.signals import SignalCollection
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ class TestMainGroup:
     def test_help(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
-        assert "sigint" in result.output
+        assert "alphasig" in result.output
 
     def test_verbose_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(main, ["-v", "--help"])
@@ -70,7 +70,7 @@ class TestExtractCommand:
         assert result.exit_code != 0
         assert "tickers" in result.output.lower() or "required" in result.output.lower()
 
-    @patch("sigint.pipeline.Pipeline")
+    @patch("alphasig.pipeline.Pipeline")
     def test_extract_runs_pipeline(
         self,
         mock_pipeline_cls: MagicMock,
@@ -89,7 +89,7 @@ class TestExtractCommand:
         assert result.exit_code == 0
         mock_pipeline_cls.assert_called_once()
 
-    @patch("sigint.pipeline.Pipeline")
+    @patch("alphasig.pipeline.Pipeline")
     def test_extract_with_output_parquet(
         self,
         mock_pipeline_cls: MagicMock,
@@ -117,7 +117,7 @@ class TestExtractCommand:
         assert result.exit_code == 0
         mock_collection.to_parquet.assert_called_once_with("output.parquet")
 
-    @patch("sigint.pipeline.Pipeline")
+    @patch("alphasig.pipeline.Pipeline")
     def test_extract_with_output_csv(
         self,
         mock_pipeline_cls: MagicMock,
@@ -145,7 +145,7 @@ class TestExtractCommand:
         assert result.exit_code == 0
         mock_collection.to_csv.assert_called_once_with("output.csv")
 
-    @patch("sigint.pipeline.Pipeline")
+    @patch("alphasig.pipeline.Pipeline")
     def test_extract_with_unknown_extension_defaults_to_parquet(
         self,
         mock_pipeline_cls: MagicMock,
@@ -173,7 +173,7 @@ class TestExtractCommand:
         assert result.exit_code == 0
         mock_collection.to_parquet.assert_called_once_with("output.dat")
 
-    @patch("sigint.pipeline.Pipeline")
+    @patch("alphasig.pipeline.Pipeline")
     def test_extract_passes_multiple_tickers(
         self,
         mock_pipeline_cls: MagicMock,
@@ -212,7 +212,7 @@ class TestQueryCommand:
         assert "--db" in result.output
         assert "--ticker" in result.output
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_query_runs(
         self,
         mock_store_cls: MagicMock,
@@ -227,7 +227,7 @@ class TestQueryCommand:
         assert result.exit_code == 0
         mock_store.close.assert_called_once()
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_query_with_filters(
         self,
         mock_store_cls: MagicMock,
@@ -272,7 +272,7 @@ class TestRankCommand:
         assert "--min-confidence" in result.output
         assert "--as-of" in result.output
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_rank_outputs_json(
         self,
         mock_store_cls: MagicMock,
@@ -305,7 +305,7 @@ class TestRankCommand:
         )
         mock_store.close.assert_called_once()
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_rank_writes_markdown_report(
         self,
         mock_store_cls: MagicMock,
@@ -353,7 +353,7 @@ class TestSectorsCommand:
         assert "--exclude-unknown" in result.output
         assert "--min-confidence" in result.output
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_sectors_outputs_json(
         self,
         mock_store_cls: MagicMock,
@@ -387,7 +387,7 @@ class TestSectorsCommand:
         )
         mock_store.close.assert_called_once()
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     def test_sectors_writes_markdown_report(
         self,
         mock_store_cls: MagicMock,
@@ -428,10 +428,10 @@ class TestServeCommand:
         assert "--host" in result.output
         assert "--db" in result.output
 
-    @patch("sigint.storage.SignalStore")
+    @patch("alphasig.storage.SignalStore")
     @patch(
-        "sigint.output.api.serve_signals",
-        side_effect=ImportError("Install sigint[api]"),
+        "alphasig.output.api.serve_signals",
+        side_effect=ImportError("Install alphasig[api]"),
     )
     def test_serve_reports_missing_api_dependency(
         self,
@@ -445,7 +445,9 @@ class TestServeCommand:
 
         result = runner.invoke(main, ["serve", "--db", ":memory:"])
         assert result.exit_code != 0
-        assert "sigint[api]" in result.output or "Install sigint[api]" in result.output
+        assert (
+            "alphasig[api]" in result.output or "Install alphasig[api]" in result.output
+        )
 
 
 class TestPrintSignalTable:

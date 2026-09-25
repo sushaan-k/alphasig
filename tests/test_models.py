@@ -1,4 +1,4 @@
-"""Tests for sigint.models -- Pydantic data models."""
+"""Tests for alphasig.models -- Pydantic data models."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import ValidationError
 
-from sigint.models import (
+from alphasig.models import (
     Filing,
     FilingSection,
     FilingType,

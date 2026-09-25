@@ -16,8 +16,8 @@ from typing import Any
 import duckdb
 import structlog
 
-from sigint.exceptions import StorageError
-from sigint.models import Signal, SignalDirection, SignalType
+from alphasig.exceptions import StorageError
+from alphasig.models import Signal, SignalDirection, SignalType
 
 logger = structlog.get_logger()
 
@@ -56,7 +56,7 @@ class SignalStore:
             Use ``":memory:"`` for an in-memory database.
     """
 
-    def __init__(self, db_path: str | Path = "sigint.duckdb") -> None:
+    def __init__(self, db_path: str | Path = "alphasig.duckdb") -> None:
         self._db_path = str(db_path)
         try:
             self._conn = duckdb.connect(self._db_path)

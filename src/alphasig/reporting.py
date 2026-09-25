@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sigint.models import Signal, SignalDirection
-from sigint.sectors import Sector, classify_sector
+from alphasig.models import Signal, SignalDirection
+from alphasig.sectors import Sector, classify_sector
 
 
 @dataclass(frozen=True)

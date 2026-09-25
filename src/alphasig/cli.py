@@ -1,10 +1,10 @@
-"""Command-line interface for sigint.
+"""Command-line interface for alphasig.
 
 Usage::
 
-    sigint extract --tickers AAPL --tickers MSFT --lookback 3
-    sigint serve --port 8080 --db sigint.duckdb
-    sigint query --ticker AAPL --type risk_change
+    alphasig extract --tickers AAPL --tickers MSFT --lookback 3
+    alphasig serve --port 8080 --db alphasig.duckdb
+    alphasig query --ticker AAPL --type risk_change
 """
 
 from __future__ import annotations
@@ -19,12 +19,13 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from sigint._logging import configure_logging
+from alphasig._logging import configure_logging
 
 console = Console()
 
 
 @click.group()
+@click.version_option(package_name="alphasig")
 @click.option(
     "-v",
     "--verbose",
@@ -38,7 +39,7 @@ console = Console()
     help="Emit structured JSON logs.",
 )
 def main(verbose: int, json_logs: bool) -> None:
-    """sigint -- Causal signal extraction from SEC filings."""
+    """alphasig -- Causal signal extraction from SEC filings."""
     configure_logging(verbosity=verbose, json=json_logs)
 
 
@@ -79,7 +80,7 @@ def main(verbose: int, json_logs: bool) -> None:
 )
 @click.option(
     "--user-agent",
-    default="sigint research bot research@example.com",
+    default="alphasig research bot research@example.com",
     help="EDGAR User-Agent (name + email).",
 )
 @click.option(
@@ -89,7 +90,7 @@ def main(verbose: int, json_logs: bool) -> None:
 )
 @click.option(
     "--db",
-    default="sigint.duckdb",
+    default="alphasig.duckdb",
     help="DuckDB database path.",
 )
 @click.option(
@@ -110,10 +111,10 @@ def extract(
     output: str | None,
 ) -> None:
     """Extract causal signals from SEC filings."""
-    from sigint.pipeline import Pipeline
+    from alphasig.pipeline import Pipeline
 
     console.print(
-        f"[bold blue]sigint[/] extracting signals for {', '.join(tickers)}",
+        f"[bold blue]alphasig[/] extracting signals for {', '.join(tickers)}",
     )
 
     pipeline = Pipeline(
@@ -146,7 +147,7 @@ def extract(
 
 
 @main.command()
-@click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
+@click.option("--db", default="alphasig.duckdb", help="DuckDB database path.")
 @click.option("--ticker", default=None, help="Filter by ticker.")
 @click.option("--type", "signal_type", default=None, help="Filter by signal type.")
 @click.option(
@@ -161,8 +162,8 @@ def query(
     limit: int,
 ) -> None:
     """Query stored signals from DuckDB."""
-    from sigint.signals import SignalCollection
-    from sigint.storage import SignalStore
+    from alphasig.signals import SignalCollection
+    from alphasig.storage import SignalStore
 
     store = SignalStore(db)
     signals = store.query(
@@ -178,7 +179,7 @@ def query(
 
 
 @main.command()
-@click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
+@click.option("--db", default="alphasig.duckdb", help="DuckDB database path.")
 @click.option("--limit", default=25, type=int, help="Maximum tickers to display.")
 @click.option(
     "--min-confidence",
@@ -210,8 +211,8 @@ def rank(
     output: str | None,
 ) -> None:
     """Rank tickers by confidence-weighted signal exposure."""
-    from sigint.reporting import rank_signals
-    from sigint.storage import SignalStore
+    from alphasig.reporting import rank_signals
+    from alphasig.storage import SignalStore
 
     as_of = _parse_cli_datetime(as_of_raw) if as_of_raw else None
     store = SignalStore(db)
@@ -244,7 +245,7 @@ def rank(
 
 
 @main.command()
-@click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
+@click.option("--db", default="alphasig.duckdb", help="DuckDB database path.")
 @click.option("--limit", default=None, type=int, help="Maximum sectors to display.")
 @click.option(
     "--min-confidence",
@@ -283,8 +284,8 @@ def sectors(
     output: str | None,
 ) -> None:
     """Summarize portfolio signal exposure by sector."""
-    from sigint.reporting import summarize_sector_exposure
-    from sigint.storage import SignalStore
+    from alphasig.reporting import summarize_sector_exposure
+    from alphasig.storage import SignalStore
 
     as_of = _parse_cli_datetime(as_of_raw) if as_of_raw else None
     store = SignalStore(db)
@@ -322,20 +323,20 @@ def sectors(
 
 
 @main.command()
-@click.option("--db", default="sigint.duckdb", help="DuckDB database path.")
+@click.option("--db", default="alphasig.duckdb", help="DuckDB database path.")
 @click.option("--host", default="127.0.0.1", help="Bind address.")
 @click.option("--port", default=8080, type=int, help="Bind port.")
 def serve(db: str, host: str, port: int) -> None:
     """Launch REST API server for stored signals."""
-    from sigint.output.api import serve_signals
-    from sigint.storage import SignalStore
+    from alphasig.output.api import serve_signals
+    from alphasig.storage import SignalStore
 
     store = SignalStore(db)
     signals = store.query(limit=100_000)
     store.close()
 
     console.print(
-        f"[bold blue]sigint[/] serving {len(signals)} signals on {host}:{port}",
+        f"[bold blue]alphasig[/] serving {len(signals)} signals on {host}:{port}",
     )
     try:
         serve_signals(signals, host=host, port=port)

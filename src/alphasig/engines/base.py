@@ -5,8 +5,8 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 
-from sigint.llm import LLMClient
-from sigint.models import FilingSection, Signal
+from alphasig.llm import LLMClient
+from alphasig.models import FilingSection, Signal
 
 
 class BaseEngine(abc.ABC):
