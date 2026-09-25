@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.console import Console
@@ -23,6 +23,9 @@ from alphasig._logging import configure_logging
 from alphasig.exceptions import ConfigurationError
 from alphasig.llm import DEFAULT_MODEL
 from alphasig.models import FilingType
+
+if TYPE_CHECKING:
+    from alphasig.signals import SignalCollection
 
 console = Console()
 
@@ -116,6 +119,20 @@ def main(verbose: int, json_logs: bool) -> None:
     default=None,
     help="Export signals to file (Parquet or CSV based on extension).",
 )
+@click.option(
+    "--calibrate",
+    is_flag=True,
+    help=(
+        "Re-score confidence with Jev's calibrated probabilities "
+        "(needs alphasig[jev] and TYPESAFE_API_KEY)."
+    ),
+)
+@click.option(
+    "--drop-below",
+    type=click.FloatRange(0.0, 1.0),
+    default=None,
+    help="With --calibrate, drop signals whose calibrated confidence is lower.",
+)
 def extract(
     extra_tickers: tuple[str, ...],
     tickers: tuple[str, ...],
@@ -127,9 +144,15 @@ def extract(
     cache_dir: str,
     db: str,
     output: str | None,
+    calibrate: bool,
+    drop_below: float | None,
 ) -> None:
     """Extract causal signals from SEC filings for TICKER(s)."""
+    from alphasig.jev import JevCalibrator
     from alphasig.pipeline import Pipeline
+
+    if drop_below is not None and not calibrate:
+        raise click.UsageError("--drop-below requires --calibrate")
 
     symbols = list(
         dict.fromkeys(
@@ -146,22 +169,29 @@ def extract(
         f"[bold blue]alphasig[/] extracting signals for {', '.join(symbols)}",
     )
 
+    calibrator = JevCalibrator(min_confidence=drop_below) if calibrate else None
     pipeline = Pipeline(
         model=model,
         user_agent=user_agent,
         cache_dir=cache_dir,
         db_path=db,
+        calibrator=calibrator,
     )
 
-    try:
-        collection = asyncio.run(
-            pipeline.extract(
+    async def _run() -> SignalCollection:
+        try:
+            return await pipeline.extract(
                 tickers=symbols,
                 filing_types=list(filing_types),
                 lookback_years=lookback,
                 engines=list(engines),
             )
-        )
+        finally:
+            if calibrator is not None:
+                await calibrator.aclose()
+
+    try:
+        collection = asyncio.run(_run())
     except ConfigurationError as exc:
         raise click.ClickException(str(exc)) from exc
 

@@ -28,6 +28,7 @@ from alphasig.exceptions import (
     PipelineError,
     StorageError,
 )
+from alphasig.jev import JevCalibrator
 from alphasig.llm import DEFAULT_MODEL, LLMClient
 from alphasig.models import Filing, FilingSection, Signal
 from alphasig.parser import parse_filing
@@ -62,6 +63,9 @@ class Pipeline:
             requests share one client limited to 10 requests/second.
         max_concurrent: Maximum number of tickers to process in parallel.
             Defaults to 3.
+        calibrator: Optional :class:`~alphasig.jev.JevCalibrator` that
+            replaces each signal's LLM confidence with Jev's calibrated
+            probability.  The caller owns it (and closes it).
     """
 
     def __init__(
@@ -74,6 +78,7 @@ class Pipeline:
         db_path: str | None = "alphasig.duckdb",
         concurrency: int = 4,
         max_concurrent: int = 3,
+        calibrator: JevCalibrator | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key
@@ -82,6 +87,7 @@ class Pipeline:
         self._db_path = db_path
         self._concurrency = concurrency
         self._max_concurrent = max_concurrent
+        self._calibrator = calibrator
 
     async def extract(
         self,
@@ -126,6 +132,9 @@ class Pipeline:
                 "'Jane Doe jane@example.com'. Pass user_agent= or set "
                 "ALPHASIG_USER_AGENT."
             )
+
+        if self._calibrator is not None:
+            self._calibrator.connect()
 
         concurrency_limit = max_concurrent or self._max_concurrent
         llm = LLMClient(api_key=self._api_key, model=self._model)
@@ -275,13 +284,26 @@ class Pipeline:
             return_exceptions=True,
         )
 
-        all_signals: list[Signal] = []
-        for job_idx, engine_result in enumerate(results):
+        per_job: list[list[Signal]] = [[] for _ in jobs]
+        for result_idx, engine_result in enumerate(results):
             if isinstance(engine_result, BaseException):
                 logger.warning("engine_failed", ticker=ticker, error=str(engine_result))
                 continue
-            filing = jobs[job_idx // len(engines)][0]
-            for sig in engine_result:
+            per_job[result_idx // len(engines)].extend(engine_result)
+
+        if self._calibrator is not None:
+            per_job = await asyncio.gather(
+                *(
+                    self._calibrator.calibrate(signals, sections, previous)
+                    for signals, (_, sections, previous) in zip(
+                        per_job, jobs, strict=True
+                    )
+                )
+            )
+
+        all_signals: list[Signal] = []
+        for (filing, _, _), job_signals in zip(jobs, per_job, strict=True):
+            for sig in job_signals:
                 stamped_metadata = {
                     **sig.metadata,
                     "_filing_accession": filing.accession_number,

@@ -185,6 +185,38 @@ curl "http://localhost:8080/signals/AAPL?signal_type=risk_change"
 
 The server needs the `api` extra: `pip install "alphasig[api]"`.
 
+### Calibrated confidence with Jev
+
+Engine `confidence` values are the LLM's self-assessment, not probabilities.
+With the optional [Jev](https://docs.typesafe.ai/) integration (TypeSafe's
+System One model), each signal's claim is re-checked against the filing text
+it came from as a yes/no question, and Jev's calibrated probability that the
+claim is supported replaces `confidence`. The LLM's value is kept in
+`metadata["llm_confidence"]`.
+
+```bash
+pip install "alphasig[jev]"
+export TYPESAFE_API_KEY="..."
+
+alphasig extract --tickers AAPL --calibrate                   # re-score
+alphasig extract --tickers AAPL --calibrate --drop-below 0.5  # and filter
+```
+
+```python
+from alphasig import Pipeline
+from alphasig.jev import JevCalibrator
+
+async with JevCalibrator(min_confidence=0.5) as calibrator:
+    signals = await Pipeline(calibrator=calibrator).extract(tickers=["AAPL"])
+```
+
+All signals of one type from a filing go to Jev in a single request: risk
+changes and tone shifts are judged against the current and previous Risk
+Factors / MD&A, supply-chain edges against Business, Risk Factors and MD&A,
+and M&A signals against the whole filing. If a Jev request fails, those
+signals keep their LLM confidence. `JevCalibrator.calibrate(signals,
+sections, previous_sections)` can also be used on its own.
+
 ### Webhooks
 
 ```python
@@ -210,6 +242,7 @@ embed a secret.
 | Anthropic API key | `ANTHROPIC_API_KEY` | Or `Pipeline(api_key=...)` |
 | EDGAR User-Agent | `ALPHASIG_USER_AGENT` | Required: `"Name email@domain"` per the SEC fair-access policy. Or `Pipeline(user_agent=...)` / `--user-agent` |
 | Model | `ALPHASIG_MODEL` | Default `claude-sonnet-5`. Or `Pipeline(model=...)` / `--model` |
+| Jev API key | `TYPESAFE_API_KEY` | Only for `--calibrate` / `JevCalibrator` (`alphasig[jev]`). `TYPESAFE_DEFAULT_MODEL` overrides `jev-latest` |
 
 EDGAR requests share one connection pool and are spaced to stay under the
 SEC's 10 requests/second limit, with backoff on 429/5xx that honours

@@ -11,7 +11,7 @@ All alphasig extraction engines emit signals conforming to a universal schema. T
 | `signal_type` | `enum` | One of: `supply_chain`, `risk_change`, `m_and_a`, `tone_shift` |
 | `direction` | `enum` | `bullish`, `bearish`, or `neutral` |
 | `strength` | `float` | Signal strength, 0.0 to 1.0 |
-| `confidence` | `float` | Extraction confidence, 0.0 to 1.0 |
+| `confidence` | `float` | Extraction confidence, 0.0 to 1.0. The LLM's self-assessment by default; with Jev calibration, the calibrated probability that the claim is supported (the LLM value moves to `metadata["llm_confidence"]`, and `metadata["confidence_source"]` is `"jev"`) |
 | `context` | `str` | Human-readable explanation |
 | `source_filing` | `str` | EDGAR filing URL |
 | `related_tickers` | `list[str]` | Other affected companies |

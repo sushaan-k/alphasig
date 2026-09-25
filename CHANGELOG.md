@@ -31,6 +31,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Optional Jev calibration (`alphasig[jev]`): `JevCalibrator`,
+  `Pipeline(calibrator=...)` and `alphasig extract --calibrate
+  [--drop-below P]` replace LLM self-reported confidence with TypeSafe Jev's
+  calibrated probability that each signal's claim is supported by the filing.
 - `alphasig extract --tickers AAPL MSFT` (as documented), comma-separated
   tickers and positional tickers.
 - `half_life_days` for `rank_signals` / `summarize_sector_exposure` and
